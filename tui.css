@@ -1,0 +1,38 @@
+Screen {
+    overflow: hidden;
+}
+
+#app-grid {
+    layout: horizontal;
+    height: 100%;
+}
+
+#sidebar {
+    width: 35;
+    height: 100%;
+    background: $surface;
+    border-right: vkey $primary;
+    dock: left;
+}
+
+#main-content {
+    width: 1fr;
+    height: 100%;
+}
+
+#log {
+    height: 1fr;
+    margin-bottom: 1;
+    border: tall $background-lighten-2;
+}
+
+#input {
+    height: 6;
+}
+
+#status {
+    height: 1;
+    background: $primary-darken-2;
+    color: $text;
+    content-align: center middle;
+}
