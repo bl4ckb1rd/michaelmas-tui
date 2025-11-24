@@ -11,8 +11,8 @@ from textual.widgets import Header, Footer, Input, TextArea, Label, OptionList
 
 from langchain_core.messages import HumanMessage, AIMessage
 
-from agent import run_agent
-import storage
+from michaelmas.core.agent import run_agent
+from michaelmas.core import storage
 
 # Load environment variables from .env file
 load_dotenv()
@@ -55,7 +55,7 @@ class ChatInput(TextArea):
 class TuiApp(App):
     """A Textual app to chat with a LangGraph agent."""
 
-    CSS_PATH = "tui.css"
+    CSS_PATH = "styles.css"
     BINDINGS = [
         ("d", "toggle_dark", "Toggle dark mode"),
         ("ctrl+c", "quit", "Quit"),

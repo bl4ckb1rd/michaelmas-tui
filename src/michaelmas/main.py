@@ -1,5 +1,5 @@
 import logging
-from tui import TuiApp
+from michaelmas.ui.tui import TuiApp
 
 # Configure root logging to INFO to avoid too much noise from Textual/system
 logging.basicConfig(

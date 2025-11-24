@@ -79,11 +79,17 @@ To enable web search, you need a free API key from Tavily.
 
 ### 4. Run the Application & Authenticate
 
-Once the setup is complete, you can launch the TUI application.
+Once the setup is complete, you need to install the project in editable mode (so it can find the new package structure) and then launch the application.
 
-```sh
-python main.py
-```
+1.  **Install in editable mode:**
+    ```sh
+    uv pip install -e .
+    ```
+
+2.  **Run the application:**
+    ```sh
+    uv run -m michaelmas.main
+    ```
 
 **First Run Only:** The first time you ask the agent to do something with Google Sheets (e.g., "create a new spreadsheet called 'My Test'"), it will automatically open a new tab in your web browser, asking you to authorize access to your Google account. After you approve, it will save a `token.json` file in the project directory so you don't have to log in every time.
 
