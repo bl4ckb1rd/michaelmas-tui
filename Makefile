@@ -17,6 +17,10 @@ run: $(VENV_DIR)
 	@echo "Running Michaelmas app..."
 	@PYTHONPATH=src uv run -m michaelmas.main
 
+test: $(VENV_DIR)
+	@echo "Running tests..."
+	@PYTHONPATH=src uv run pytest --cov=michaelmas --cov-report=term-missing tests/
+
 clean:
 	@echo "Cleaning up..."
 	@rm -rf $(VENV_DIR)
