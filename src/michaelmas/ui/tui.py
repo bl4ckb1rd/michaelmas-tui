@@ -72,12 +72,20 @@ class ChatInput(TextArea):
 class TuiApp(App):
     """A Textual app to chat with a LangGraph agent."""
 
+    TITLE = "Michaelmas"
     CSS_PATH = "styles.css"
     BINDINGS = [
         ("d", "toggle_dark", "Toggle dark mode"),
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+n", "new_chat", "New Chat"),
     ]
+
+    class ModelsListed(Message):
+        """Posted when list_models_worker returns available models."""
+        def __init__(self, models: list[str], info_text: str) -> None:
+            super().__init__()
+            self.models = models
+            self.info_text = info_text
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
@@ -246,21 +254,54 @@ class TuiApp(App):
         """Sets the available models list on the main thread."""
         self.available_models = models
 
+    def stream_text_to_log(self, text: str) -> None:
+        """Appends text to the log without a newline (for streaming)."""
+        # Strip markup since we are in TextArea mode
+        plain_text = Text.from_markup(text).plain
+        log = self.query_one("#log", TextArea)
+        log.insert(plain_text)
+        log.scroll_end(animate=False)
+
+    def write_to_log(self, text: str) -> None:
+        """Helper method to write text to the log and scroll to the end."""
+        # Strip markup tags so they don't appear as raw text in the TextArea
+        plain_text = Text.from_markup(text).plain
+        log = self.query_one("#log", TextArea)
+        log.insert(plain_text + "\n")
+        log.scroll_end(animate=False)
+
     # --- Worker Methods ---
 
-    def run_agent_worker(self) -> None:
-        """Runs the agent in a background worker."""
+    async def run_agent_worker(self) -> None:
+        """Runs the agent in a background worker with streaming."""
         prompt = self.prompt_to_run
         model = self.current_model
         history = self.conversation_history.copy() # Pass copy of history
 
         logging.info(f"Running agent with model: {model}")
+        
+        # Start the log entry for the agent
+        self.call_from_thread(self.write_to_log, "[bold green]Agent:[/]") 
+        
+        full_response = ""
+        usage = {}
+        interaction_cost = 0.0
+
         try:
-            result = run_agent(prompt, model_name=model, history=history)
-            response = result.get("response", "No response")
-            usage = result.get("usage", {})
+            # run_agent is now an async generator
+            async for chunk in run_agent(prompt, model_name=model, history=history):
+                if chunk["type"] == "token":
+                    text = chunk["content"]
+                    full_response += text
+                    self.call_from_thread(self.stream_text_to_log, text)
+                
+                elif chunk["type"] == "usage":
+                    usage = chunk["usage"]
             
-            # Calculate costs
+            # Add a newline after streaming finishes
+            self.call_from_thread(self.stream_text_to_log, "\n")
+
+            # Calculate costs (post-stream)
             input_tokens = usage.get("input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
             total_tokens = usage.get("total_tokens", 0)
@@ -279,7 +320,7 @@ class TuiApp(App):
             self.conversation_history.append(HumanMessage(content=prompt))
             self.conversation_history.append(
                 AIMessage(
-                    content=response, 
+                    content=full_response, 
                     additional_kwargs={"cost": interaction_cost, "usage": usage}
                 )
             )
@@ -290,12 +331,11 @@ class TuiApp(App):
             # Update status bar
             self.call_from_thread(self.update_status_bar, interaction_cost)
             
-            self.call_from_thread(self.write_to_log, f"[bold green]Agent:[/ ] {response}")
-            logging.info(f"Agent response: {response}")
+            logging.info(f"Agent response (streamed): {full_response}")
             logging.info(f"Usage: {usage}, Cost: {interaction_cost}")
             
         except Exception as e:
-            error_msg = f"[bold red]Error:[/ ] {e}"
+            error_msg = f"\n[bold red]Error:[/ ] {e}"
             self.call_from_thread(self.write_to_log, error_msg)
             logging.error(f"Error running agent: {e}", exc_info=True)
         finally:
@@ -343,14 +383,11 @@ class TuiApp(App):
 
     # --- Event Handlers & UI Logic ---
 
-    def write_to_log(self, text: str) -> None:
-        """Helper method to write text to the log and scroll to the end."""
-        # Strip markup tags so they don't appear as raw text in the TextArea
-        plain_text = Text.from_markup(text).plain
-        
-        log = self.query_one("#log", TextArea)
-        log.insert(plain_text + "\n")
-        log.scroll_end(animate=False)
+    def on_models_listed(self, message: ModelsListed) -> None:
+        """Handles the ModelsListed message to store and display available models."""
+        self.available_models = message.models
+        self.write_to_log(message.info_text) # Display the info text
+        self.reset_input() # Reset input focus after listing
 
     def action_toggle_dark(self) -> None:
         """An action to toggle dark mode."""

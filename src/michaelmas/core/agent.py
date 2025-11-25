@@ -208,10 +208,10 @@ def create_agent_graph(model_name: str = "gemini-2.5-flash"):
 
 # --- 5. Main execution function ---
 
-def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", history: list[BaseMessage] = []):
+async def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", history: list[BaseMessage] = []):
     """
     Runs the agent with a given prompt and model name.
-    Returns a dictionary with the response text and usage metadata.
+    Yields dictionaries with response tokens and usage metadata.
     """
     # Prepend current date to ensure agent has up-to-date context
     today_date_str = datetime.now().strftime("Today's date is %A, %B %d, %Y.")
@@ -220,7 +220,6 @@ def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", history: list[B
     initial_messages = []
 
     # If the history is empty or only contains a date message, add the default system prompt
-    # Check if history (after date injection) is effectively empty of user/AI messages
     has_user_ai_messages = any(isinstance(msg, (HumanMessage, AIMessage)) for msg in history)
     
     if not has_user_ai_messages:
@@ -233,48 +232,58 @@ def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", history: list[B
 
     app = create_agent_graph(model_name)
     inputs = {"messages": full_messages}
-    final_response = None
-    usage_metadata = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    
+    # Track usage across the stream
+    final_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
-    for output in app.stream(inputs, stream_mode="values"):
-        logging.debug(f"LangGraph Stream Output: {output}")
-        last_message = output["messages"][-1]
-        if isinstance(last_message, AIMessage):
-            
-            logging.debug(f"AIMessage Metadata: {last_message.response_metadata}")
+    async for event in app.astream_events(inputs, version="v2"):
+        kind = event["event"]
+        
+        # We only care about events from our agents, not the supervisor/router
+        node_name = event.get("metadata", {}).get("langgraph_node", "")
+        
+        if not node_name or not node_name.startswith("agent_"):
+            continue
 
-            # Attempt to extract usage from standard property
-            if hasattr(last_message, "usage_metadata") and last_message.usage_metadata:
-                usage_metadata = last_message.usage_metadata
-            
-            # Fallback: Check response_metadata (Google provider specific)
-            elif "token_usage" in last_message.response_metadata:
-                # Structure might be {'prompt_tokens': X, 'completion_tokens': Y, 'total_tokens': Z}
-                token_usage = last_message.response_metadata["token_usage"]
-                usage_metadata = {
+        if kind == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+            content = chunk.content
+            if content:
+                # Handle case where content is a list (e.g. from some tool-using models)
+                text_content = ""
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and "text" in part:
+                            text_content += part["text"]
+                        elif isinstance(part, str):
+                            text_content += part
+                else:
+                    text_content = str(content)
+                
+                if text_content:
+                    yield {"type": "token", "content": text_content}
+        
+        elif kind == "on_chat_model_end":
+            output = event["data"]["output"]
+            # Try to extract usage
+            usage = {}
+            if hasattr(output, "usage_metadata") and output.usage_metadata:
+                usage = output.usage_metadata
+            elif hasattr(output, "response_metadata") and "token_usage" in output.response_metadata:
+                 token_usage = output.response_metadata["token_usage"]
+                 usage = {
                     "input_tokens": token_usage.get("prompt_tokens", 0),
                     "output_tokens": token_usage.get("completion_tokens", 0),
                     "total_tokens": token_usage.get("total_tokens", 0)
                 }
             
-            if not last_message.tool_calls:
-                # Handle content being a list (multimodal/structured) or string
-                content = last_message.content
-                if isinstance(content, list):
-                    text_parts = []
-                    for part in content:
-                        if isinstance(part, dict) and "text" in part:
-                            text_parts.append(part["text"])
-                        elif isinstance(part, str):
-                            text_parts.append(part)
-                    final_response = "".join(text_parts)
-                else:
-                    final_response = str(content)
+            if usage:
+                # Accumulate if multiple agents run (though usually just one per turn)
+                final_usage["input_tokens"] += usage.get("input_tokens", 0)
+                final_usage["output_tokens"] += usage.get("output_tokens", 0)
+                final_usage["total_tokens"] += usage.get("total_tokens", 0)
 
-    return {
-        "response": final_response if final_response else "Agent finished with no response.",
-        "usage": usage_metadata
-    }
+    yield {"type": "usage", "usage": final_usage}
 
 if __name__ == "__main__":
     # Configure logging for standalone run
