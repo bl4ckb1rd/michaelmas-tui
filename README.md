@@ -4,40 +4,25 @@ This project is a proof-of-concept for a personal assistant agent with a Text-ba
 
 ## Setup
 
-This project uses `uv` for package management.
+This project uses `uv` for package management. A `Makefile` is provided to simplify common tasks.
 
-### 1. Create and Activate Virtual Environment
+### 1. Initial Setup
 
-First, create a virtual environment and activate it.
-
-```sh
-# Create the virtual environment
-python -m venv .venv
-
-# Activate it (on Linux/macOS)
-source .venv/bin/activate
-
-# On Windows, use:
-# .venv\Scripts\activate
-```
-
-### 2. Install Dependencies
-
-With the virtual environment active, install the required packages using `uv`. This command installs the dependencies listed in the `pyproject.toml` file.
+To set up the project and install all dependencies:
 
 ```sh
-# If you don't have uv, install it first
-pip install uv
-
-# Sync the virtual environment with the dependencies in pyproject.toml
-uv pip sync pyproject.toml
+make install
 ```
+This command will:
+*   Create a Python virtual environment (`.venv`).
+*   Ensure `uv` is installed globally.
+*   Install all project dependencies (including `langchain`, `langgraph`, `textual`, etc.) into the virtual environment.
 
-### 3. Configure API Keys
+### 2. Configure API Keys
 
-The agent requires two sets of credentials: a Google API Key for the Gemini model and OAuth 2.0 credentials for Google Sheets. It also requires an API key for Tavily Search for web browsing.
+The agent requires several API keys and credentials:
 
-#### a) Gemini API Key
+#### a) Google API Key (for Gemini Models)
 
 1.  Open the `.env` file.
 2.  Replace `"YOUR_GOOGLE_API_KEY"` with your actual [Google API key](https://ai.google.dev/).
@@ -58,7 +43,7 @@ To allow the agent to access Google Sheets on your behalf, you need to provide O
     *   Go to the [APIs & Services > Credentials](https://console.cloud.google.com/apis/credentials) page.
     *   Click **+ CREATE CREDENTIALS** and select **OAuth client ID**.
     *   If prompted, configure the consent screen. For an internal app, you can keep it simple. Select **Desktop app** as the application type.
-    *   Give it a name (e.g., "Personal Assistant CLI").
+    *   Give it a name (e.g., "Michaelmas CLI").
     *   Click **Create**.
 
 3.  **Download Credentials File:**
@@ -77,36 +62,25 @@ To enable web search, you need a free API key from Tavily.
     TAVILY_API_KEY="tvly-xxxxxxxxxxxxxxxxxxxxxxxxx"
     ```
 
-### 4. Run the Application & Authenticate
+### 3. Run the Application & Authenticate
 
-Once the setup is complete, you need to install the project in editable mode (so it can find the new package structure) and then launch the application.
+To launch the Michaelmas TUI application:
 
-1.  **Install in editable mode:**
-    ```sh
-    uv pip install -e .
-    ```
+```sh
+make run
+```
 
-2.  **Run the application:**
-    ```sh
-    uv run -m michaelmas.main
-    ```
-
-**First Run Only:** The first time you ask the agent to do something with Google Sheets (e.g., "create a new spreadsheet called 'My Test'"), it will automatically open a new tab in your web browser, asking you to authorize access to your Google account. After you approve, it will save a `token.json` file in the project directory so you don't have to log in every time.
-
-## Example Prompts
-
-- `Hello`
-- `Create a new spreadsheet called 'Groceries'`
-- `What is the capital of France?`
-- `Search for the latest news about Franco Colapinto.`
-- (After creating the sheet) `Get the data from spreadsheet ID [the ID from the previous response] in range 'Sheet1!A1:B2'`
-
-To exit the application, press `Ctrl+C`.
+**First Run Only (for Google Sheets):** The first time you ask the agent to do something with Google Sheets (e.g., "create a new spreadsheet called 'My Test'"), it will automatically open a new tab in your web browser, asking you to authorize access to your Google account. After you approve, it will save a `token.json` file in the project directory so you don't have to log in every time.
 
 ## Commands
 
 The TUI supports special slash commands for meta-actions:
 
--   `/list_models`: Lists all available Gemini models that support content generation. This is useful for debugging and for finding a model name to use with the `/set_model` command.
--   `/set_model <model_name>`: Changes the Gemini model used for the agent in the current session.
-    -   Example: `/set_model models/gemini-1.5-flash-latest`
+-   `/list_models`: Lists all available Gemini and local Ollama models that support content generation. This is useful for debugging and for finding a model name to use with the `/set_model` command.
+-   `/set_model <model_name>`: Changes the AI model used for the agent in the current session.
+    -   Example for Gemini: `/set_model gemini-1.5-flash-latest`
+    -   Example for Ollama: `/set_model ollama:llama3`
+
+### Maintenance Commands
+
+-   `make clean`: Removes the virtual environment, log files, conversation history, and temporary credential tokens. Useful for a fresh start.

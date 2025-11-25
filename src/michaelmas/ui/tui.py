@@ -2,12 +2,13 @@ import os
 import logging
 from dotenv import load_dotenv
 from rich.text import Text
+import ollama
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical
 from textual.message import Message
-from textual.widgets import Header, Footer, Input, TextArea, Label, OptionList
+from textual.widgets import Header, Footer, TextArea, Label, OptionList
 
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -33,6 +34,8 @@ class ChatInput(TextArea):
     BINDINGS = [
         Binding("enter", "submit_message", "Send message", priority=True),
         Binding("shift+enter", "insert_newline", "New line", priority=True),
+        Binding("ctrl+up", "history_prev", "Previous command", priority=True),
+        Binding("ctrl+down", "history_next", "Next command", priority=True),
     ]
 
     class Submitted(Message):
@@ -40,6 +43,14 @@ class ChatInput(TextArea):
         def __init__(self, value: str) -> None:
             super().__init__()
             self.value = value
+
+    class HistoryPrev(Message):
+        """Posted when user presses Ctrl+Up."""
+        pass
+
+    class HistoryNext(Message):
+        """Posted when user presses Ctrl+Down."""
+        pass
 
     def action_submit_message(self) -> None:
         """Submit the text."""
@@ -51,6 +62,12 @@ class ChatInput(TextArea):
     def action_insert_newline(self) -> None:
         """Insert a newline."""
         self.insert("\n")
+
+    def action_history_prev(self) -> None:
+        self.post_message(self.HistoryPrev())
+
+    def action_history_next(self) -> None:
+        self.post_message(self.HistoryNext())
 
 class TuiApp(App):
     """A Textual app to chat with a LangGraph agent."""
@@ -84,15 +101,56 @@ class TuiApp(App):
         
         # Conversation State
         self.current_conversation_id = None
-        self.conversation_history = [] # List of BaseMessage objects
+        self.conversation_history = [] 
+        
+        # Command History
+        self.command_history = []
+        self.history_index = -1 
+
+        # Model State
+        self.available_models: list[str] = []
 
         self.load_conversations_into_sidebar()
         
-        self.write_to_log("[bold green]Agent:[/] Hello! How can I assist you today?")
-        self.write_to_log(f"[bold yellow]INFO:[/] Using model: {self.current_model}")
+        self.write_to_log("[bold green]Agent:[/ ] Hello! How can I assist you today?")
+        self.write_to_log(f"[bold yellow]INFO:[/ ] Using model: {self.current_model}")
         
         self.update_status_bar(0.0)
         self.query_one(ChatInput).focus()
+
+    def on_chat_input_history_prev(self) -> None:
+        """Handle Ctrl+Up."""
+        if not self.command_history:
+            return
+        
+        # If we are currently at "new line" (index -1), start from the end
+        if self.history_index == -1:
+            self.history_index = len(self.command_history) - 1
+        elif self.history_index > 0:
+            self.history_index -= 1
+        
+        self._load_history_item()
+
+    def on_chat_input_history_next(self) -> None:
+        """Handle Ctrl+Down."""
+        if self.history_index == -1:
+            return
+
+        if self.history_index < len(self.command_history) - 1:
+            self.history_index += 1
+            self._load_history_item()
+        else:
+            # We are at the end, pushing down goes back to empty line
+            self.history_index = -1
+            self.query_one(ChatInput).clear()
+
+    def _load_history_item(self):
+        """Helper to load the command at current history_index into input."""
+        if 0 <= self.history_index < len(self.command_history):
+            text = self.command_history[self.history_index]
+            input_widget = self.query_one(ChatInput)
+            input_widget.clear()
+            input_widget.insert(text)
 
     def update_status_bar(self, last_cost: float):
         """Updates the status bar with current metrics."""
@@ -104,7 +162,7 @@ class TuiApp(App):
         self.current_conversation_id = None
         self.conversation_history = []
         self.query_one("#log", TextArea).clear()
-        self.write_to_log("[bold green]Agent:[/] Started a new conversation.")
+        self.write_to_log("[bold green]Agent:[/ ] Started a new conversation.")
         self.load_conversations_into_sidebar() # Refresh list (to unselect)
 
     def load_conversations_into_sidebar(self):
@@ -131,7 +189,7 @@ class TuiApp(App):
         """Loads a specific conversation."""
         data = storage.load_conversation(conversation_id)
         if not data:
-            self.write_to_log(f"[bold red]Error:[/] Could not load conversation {conversation_id}")
+            self.write_to_log(f"[bold red]Error:[/ ] Could not load conversation {conversation_id}")
             return
 
         self.current_conversation_id = data["id"]
@@ -142,7 +200,7 @@ class TuiApp(App):
         for msg in data.get("messages", []):
             if msg["type"] == "human":
                 self.conversation_history.append(HumanMessage(content=msg["content"]))
-                self.write_to_log(f"[bold blue]You:[/] {msg['content']}")
+                self.write_to_log(f"[bold blue]You:[/ ] {msg['content']}")
             elif msg["type"] == "ai":
                 # Restore metadata
                 additional_kwargs = {}
@@ -152,9 +210,9 @@ class TuiApp(App):
                     additional_kwargs["usage"] = msg["usage"]
                 
                 self.conversation_history.append(AIMessage(content=msg["content"], additional_kwargs=additional_kwargs))
-                self.write_to_log(f"[bold green]Agent:[/] {msg['content']}")
+                self.write_to_log(f"[bold green]Agent:[/ ] {msg['content']}")
         
-        self.write_to_log(f"[bold yellow]INFO:[/] Loaded conversation: {data.get('title')}")
+        self.write_to_log(f"[bold yellow]INFO:[/ ] Loaded conversation: {data.get('title')}")
 
     def save_current_chat(self):
         """Saves the current conversation to storage."""
@@ -183,6 +241,10 @@ class TuiApp(App):
         input_widget.disabled = False
         input_widget.clear()
         input_widget.focus()
+
+    def set_available_models(self, models: list[str]) -> None:
+        """Sets the available models list on the main thread."""
+        self.available_models = models
 
     # --- Worker Methods ---
 
@@ -228,43 +290,64 @@ class TuiApp(App):
             # Update status bar
             self.call_from_thread(self.update_status_bar, interaction_cost)
             
-            self.call_from_thread(self.write_to_log, f"[bold green]Agent:[/] {response}")
+            self.call_from_thread(self.write_to_log, f"[bold green]Agent:[/ ] {response}")
             logging.info(f"Agent response: {response}")
             logging.info(f"Usage: {usage}, Cost: {interaction_cost}")
             
         except Exception as e:
-            error_msg = f"[bold red]Error:[/] {e}"
+            error_msg = f"[bold red]Error:[/ ] {e}"
             self.call_from_thread(self.write_to_log, error_msg)
             logging.error(f"Error running agent: {e}", exc_info=True)
         finally:
             self.call_from_thread(self.reset_input)
 
     def list_models_worker(self) -> None:
-        """Provides a list of common Gemini models."""
+        """Provides a list of available models (Gemini + Ollama)."""
         logging.info("Listing available models.")
-        models_info = "[bold cyan]Available Gemini Models:[/]\n"
-        models_info += "- `gemini-2.5-pro` (Most capable, multimodal)\n"
-        models_info += "- `gemini-2.5-flash` (Fast, good for many tasks)\n"
-        models_info += "- `gemini-2.5-flash-lite` (Even faster, smaller version)\n"
-        models_info += "- `gemini-3-pro-preview` (Preview model, potentially highly capable)\n"
-        models_info += "\n[bold yellow]Note:[/] These are the models you've indicated are available. For a comprehensive list and their specific capabilities, please refer to the official Google AI documentation."
-        self.call_from_thread(self.write_to_log, models_info)
+        models_info = "[bold cyan]Available Gemini Models (for your API key):[/]\n"
+        gemini_models = [
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3-pro-preview",
+        ]
+        
+        # Add local Ollama models
+        ollama_models = []
+        try:
+            ollama_response = ollama.list()
+            if 'models' in ollama_response:
+                for m in ollama_response['models']:
+                    name = m['model']
+                    ollama_models.append(f"ollama:{name}")
+            else:
+                 models_info += "[dim]No models found in Ollama response.[/]\n"
+        except Exception as e:
+            logging.warning(f"Failed to list Ollama models: {e}")
+            models_info += f"[dim]Could not connect to Ollama ({e}). Make sure it is running.[/]\n"
+        
+        # Combine all models
+        all_models = gemini_models + ollama_models
+        
+        # Format for display
+        for model_name in all_models:
+            models_info += f"- `{model_name}`\n"
 
+        models_info += "\n[bold yellow]Note:[/ ] Use `/set_model <name>` to switch."
+        
+        # Directly update UI from worker using call_from_thread
+        self.call_from_thread(self.write_to_log, models_info)
+        self.call_from_thread(self.set_available_models, all_models)
         self.call_from_thread(self.reset_input)
-
-    def list_models_worker(self) -> None:
-        """Provides a list of common Gemini models."""
-        models_info = "[bold cyan]Available Gemini Models:[/]\n..."
-        self.call_from_thread(self.write_to_log, models_info)
-        self.call_from_thread(self.query_one(ChatInput).focus)
-        self.call_from_thread(self.query_one(ChatInput).__setattr__, "disabled", False)
 
 
     # --- Event Handlers & UI Logic ---
 
     def write_to_log(self, text: str) -> None:
-        """Helper method to write text to the log."""
+        """Helper method to write text to the log and scroll to the end."""
+        # Strip markup tags so they don't appear as raw text in the TextArea
         plain_text = Text.from_markup(text).plain
+        
         log = self.query_one("#log", TextArea)
         log.insert(plain_text + "\n")
         log.scroll_end(animate=False)
@@ -279,42 +362,62 @@ class TuiApp(App):
         if not text:
             return
 
+        # Save to history
+        self.command_history.append(text)
+        self.history_index = -1
+
         input_widget = self.query_one(ChatInput)
         input_widget.disabled = True
         
         # Handle slash commands
         if text.startswith("/"):
-            self.write_to_log(f"[bold yellow]CMD:[/] {text}")
+            logging.info(f"User command: {text}")
+            self.write_to_log(f"[bold yellow]CMD:[/ ] {text}")
             command, *args = text.split()
             
-            if command == "/new":
-                self.action_new_chat()
-                input_widget.disabled = False
-            elif command == "/list_models":
+            if command == "/list_models":
                 self.run_worker(self.list_models_worker, exclusive=True, thread=True)
+            elif command == "/help":
+                help_text = """[bold cyan]Available Commands:[/ ]
+- [bold]/help[/ ]: Show this help message.
+- [bold]/new[/ ]: Start a new conversation.
+- [bold]/list_models[/ ]: List available Gemini and Ollama models.
+- [bold]/set_model <name>[/ ]: Switch the active AI model (e.g., /set_model ollama:llama3).
+"""
+                self.write_to_log(help_text)
+                self.reset_input()
             elif command == "/set_model":
                 if args:
-                    self.current_model = args[0]
-                    self.write_to_log(f"[bold yellow]INFO:[/] Model set to: {self.current_model}")
-                    input_widget.disabled = False
+                    new_model = args[0]
+                    # Check against available models
+                    if not self.available_models:
+                        self.write_to_log("[bold yellow]WARNING:[/ ] Model list is not loaded. Try /list_models first.")
+                        self.reset_input()
+                        return
+                    
+                    if new_model in self.available_models:
+                        self.current_model = new_model
+                        self.write_to_log(f"[bold yellow]INFO:[/ ] Model set to: {self.current_model}")
+                        logging.info(f"Model switched to: {self.current_model}")
+                    else:
+                        self.write_to_log(f"[bold red]Error:[/ ] Model '{new_model}' is not a valid or available model. Use /list_models to see options.")
+                    self.reset_input()
                 else:
-                    self.write_to_log("[bold red]Error:[/] /set_model requires a model name.")
-                    input_widget.disabled = False
+                    self.write_to_log("[bold red]Error:[/ ] /set_model requires a model name.")
+                    self.reset_input()
             else:
-                self.write_to_log(f"[bold red]Error:[/] Unknown command: {command}")
-                input_widget.disabled = False
+                self.write_to_log(f"[bold red]Error:[/ ] Unknown command: {command}")
+                logging.warning(f"Unknown command received: {command}")
+                self.reset_input()
             
-            input_widget.clear()
-            input_widget.focus()
-
         # Handle regular prompts
         else:
-            self.write_to_log(f"[bold blue]You:[/] {text}")
+            logging.info(f"User prompt: {text}")
+            self.write_to_log(f"[bold blue]You:[/ ] {text}")
             self.write_to_log("[bold yellow]Agent is thinking...[/]")
             
             self.prompt_to_run = text
             self.run_worker(self.run_agent_worker, exclusive=True, thread=True)
-            input_widget.clear()
 
 
 if __name__ == "__main__":

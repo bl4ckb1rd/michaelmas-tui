@@ -9,6 +9,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMe
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, END
 
 # --- Import Tools ---
@@ -23,9 +24,9 @@ from michaelmas.tools.search import web_search
 # Load environment variables from .env file
 load_dotenv()
 
-# Ensure the Google API key is set
+# Ensure the Google API key is set (only strictly needed if using Gemini)
 if "GOOGLE_API_KEY" not in os.environ:
-    raise ValueError("GOOGLE_API_KEY not found in .env file. Please set it.")
+    logging.warning("GOOGLE_API_KEY not found. Gemini models will not work.")
 
 # --- System Prompt ---
 DEFAULT_SYSTEM_PROMPT = """
@@ -83,7 +84,14 @@ def create_agent_node(llm, tools):
     def agent_node(state: SupervisorState):
         agent_name = tools[0].name.split('_')[0] if tools else "General"
         logging.info(f"AGENT ({agent_name}): Running...")
-        model = llm.bind_tools(tools)
+        
+        # Conditional tool binding: Skip for Ollama to avoid "GGGG" garbage output
+        if isinstance(llm, ChatOllama):
+            logging.info(f"AGENT ({agent_name}): Skipping tool binding for Ollama model.")
+            model = llm
+        else:
+            model = llm.bind_tools(tools)
+            
         response = model.invoke(state["messages"])
         return {"messages": [response]}
     return agent_node
@@ -123,7 +131,15 @@ def create_agent_graph(model_name: str = "gemini-2.5-flash"):
     if model_name in _agent_graph_cache:
         return _agent_graph_cache[model_name]
 
-    llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
+    # Instantiate the appropriate LLM
+    if model_name.startswith("ollama:"):
+        ollama_model = model_name.split(":", 1)[1]
+        logging.info(f"Using ChatOllama with model: {ollama_model}")
+        # Using temperature=0.1 to avoid deterministic loops/garbage output in some quantized models
+        llm = ChatOllama(model=ollama_model, temperature=0.1)
+    else:
+        logging.info(f"Using ChatGoogleGenerativeAI with model: {model_name}")
+        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
     
     supervisor_node = create_supervisor(llm)
     
