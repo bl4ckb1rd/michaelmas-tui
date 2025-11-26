@@ -36,3 +36,27 @@ Screen {
     color: $text;
     content-align: center middle;
 }
+
+/* --- Model Selection Modal --- */
+
+ModelSelectionScreen {
+    align: center middle;
+    background: $background 50%;
+}
+
+#model-dialog {
+    grid-size: 1;
+    grid-rows: auto 1fr;
+    width: 60;
+    height: 20;
+    border: thick $primary;
+    background: $surface;
+}
+
+#model-title {
+    content-align: center middle;
+    padding: 1;
+    background: $primary-darken-2;
+    color: $text;
+    width: 100%;
+}

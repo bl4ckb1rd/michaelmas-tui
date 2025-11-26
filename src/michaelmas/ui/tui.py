@@ -6,9 +6,10 @@ import ollama
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical
+from textual.containers import Container, Vertical, Grid
 from textual.message import Message
 from textual.widgets import Header, Footer, TextArea, Label, OptionList
+from textual.screen import ModalScreen
 
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -68,6 +69,28 @@ class ChatInput(TextArea):
 
     def action_history_next(self) -> None:
         self.post_message(self.HistoryNext())
+
+class ModelSelectionScreen(ModalScreen[str]):
+    """A modal screen to select a model."""
+
+    def __init__(self, models: list[str]):
+        super().__init__()
+        self.models = models
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label("Select an AI Model", id="model-title"),
+            OptionList(*self.models, id="model-list"),
+            id="model-dialog",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        # OptionList returns the string label of the selected option
+        selected_model = str(event.option.prompt)
+        self.dismiss(selected_model)
 
 class TuiApp(App):
     """A Textual app to chat with a LangGraph agent."""
@@ -183,15 +206,17 @@ class TuiApp(App):
         self.conversations_map = conversations 
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        """Handle sidebar selection."""
-        if event.option_index is None:
-            return
-        
-        try:
-            selected_conv = self.conversations_map[event.option_index]
-            self.load_chat(selected_conv["id"])
-        except IndexError:
-            pass
+        """Handle sidebar selection (Main conversation list)."""
+        # Only handle sidebar selections here (check ID)
+        if event.option_list.id == "sidebar":
+            if event.option_index is None:
+                return
+            
+            try:
+                selected_conv = self.conversations_map[event.option_index]
+                self.load_chat(selected_conv["id"])
+            except IndexError:
+                pass
 
     def load_chat(self, conversation_id: str):
         """Loads a specific conversation."""
@@ -341,10 +366,10 @@ class TuiApp(App):
         finally:
             self.call_from_thread(self.reset_input)
 
-    def list_models_worker(self) -> None:
-        """Provides a list of available models (Gemini + Ollama)."""
-        logging.info("Listing available models.")
-        models_info = "[bold cyan]Available Gemini Models (for your API key):[/]\n"
+    def select_model_worker(self) -> None:
+        """Fetches models and opens the selection modal."""
+        logging.info("Fetching models for selection.")
+        
         gemini_models = [
             "gemini-2.5-pro",
             "gemini-2.5-flash",
@@ -352,7 +377,6 @@ class TuiApp(App):
             "gemini-3-pro-preview",
         ]
         
-        # Add local Ollama models
         ollama_models = []
         try:
             ollama_response = ollama.list()
@@ -360,34 +384,23 @@ class TuiApp(App):
                 for m in ollama_response['models']:
                     name = m['model']
                     ollama_models.append(f"ollama:{name}")
-            else:
-                 models_info += "[dim]No models found in Ollama response.[/]\n"
         except Exception as e:
             logging.warning(f"Failed to list Ollama models: {e}")
-            models_info += f"[dim]Could not connect to Ollama ({e}). Make sure it is running.[/]\n"
         
-        # Combine all models
         all_models = gemini_models + ollama_models
         
-        # Format for display
-        for model_name in all_models:
-            models_info += f"- `{model_name}`\n"
+        # Push the screen from the worker, but we must ensure we're calling App methods safely.
+        # push_screen is thread safe in Textual.
+        self.call_from_thread(self.app.push_screen, ModelSelectionScreen(all_models), self.on_model_selected)
 
-        models_info += "\n[bold yellow]Note:[/ ] Use `/set_model <name>` to switch."
+    def on_model_selected(self, model_name: str) -> None:
+        """Callback for when a model is selected from the modal."""
+        if model_name:
+            self.current_model = model_name
+            self.write_to_log(f"[bold yellow]INFO:[/ ] Model set to: {self.current_model}")
+            logging.info(f"Model switched to: {self.current_model}")
         
-        # Directly update UI from worker using call_from_thread
-        self.call_from_thread(self.write_to_log, models_info)
-        self.call_from_thread(self.set_available_models, all_models)
-        self.call_from_thread(self.reset_input)
-
-
-    # --- Event Handlers & UI Logic ---
-
-    def on_models_listed(self, message: ModelsListed) -> None:
-        """Handles the ModelsListed message to store and display available models."""
-        self.available_models = message.models
-        self.write_to_log(message.info_text) # Display the info text
-        self.reset_input() # Reset input focus after listing
+        self.reset_input()
 
     def action_toggle_dark(self) -> None:
         """An action to toggle dark mode."""
@@ -412,36 +425,16 @@ class TuiApp(App):
             self.write_to_log(f"[bold yellow]CMD:[/ ] {text}")
             command, *args = text.split()
             
-            if command == "/list_models":
-                self.run_worker(self.list_models_worker, exclusive=True, thread=True)
+            if command == "/model":
+                self.run_worker(self.select_model_worker, exclusive=True, thread=True)
             elif command == "/help":
                 help_text = """[bold cyan]Available Commands:[/ ]
 - [bold]/help[/ ]: Show this help message.
 - [bold]/new[/ ]: Start a new conversation.
-- [bold]/list_models[/ ]: List available Gemini and Ollama models.
-- [bold]/set_model <name>[/ ]: Switch the active AI model (e.g., /set_model ollama:llama3).
+- [bold]/model[/ ]: Open the model selector to switch AI models.
 """
                 self.write_to_log(help_text)
                 self.reset_input()
-            elif command == "/set_model":
-                if args:
-                    new_model = args[0]
-                    # Check against available models
-                    if not self.available_models:
-                        self.write_to_log("[bold yellow]WARNING:[/ ] Model list is not loaded. Try /list_models first.")
-                        self.reset_input()
-                        return
-                    
-                    if new_model in self.available_models:
-                        self.current_model = new_model
-                        self.write_to_log(f"[bold yellow]INFO:[/ ] Model set to: {self.current_model}")
-                        logging.info(f"Model switched to: {self.current_model}")
-                    else:
-                        self.write_to_log(f"[bold red]Error:[/ ] Model '{new_model}' is not a valid or available model. Use /list_models to see options.")
-                    self.reset_input()
-                else:
-                    self.write_to_log("[bold red]Error:[/ ] /set_model requires a model name.")
-                    self.reset_input()
             else:
                 self.write_to_log(f"[bold red]Error:[/ ] Unknown command: {command}")
                 logging.warning(f"Unknown command received: {command}")
