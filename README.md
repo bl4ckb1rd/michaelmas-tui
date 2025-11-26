@@ -1,86 +1,109 @@
-# Personal Assistant Agent POC
+# Michaelmas: Advanced AI Personal Assistant
 
-This project is a proof-of-concept for a personal assistant agent with a Text-based User Interface (TUI). It uses LangChain and LangGraph for the agent logic, Google's Gemini Pro as the language model, and Textual for the TUI.
+**Michaelmas** is a sophisticated, terminal-based AI assistant orchestrated to optimize the digital life, workflows, and information streams of the modern IT professional. Built with Python, LangGraph, and Textual, it offers a seamless TUI experience.
+
+## Key Features
+
+*   **Multi-Model Support**: Switch dynamically between **Google Gemini** (Cloud) and **Ollama** (Local) models.
+*   **Agentic Capabilities**:
+    *   **General Chat**: Intelligent conversation with context awareness.
+    *   **Web Research**: Autonomous web searching using **Tavily** to find real-time information.
+    *   **Google Sheets Management**: Create, read, and update Google Sheets directly from the chat.
+*   **Advanced TUI**:
+    *   **Streaming Responses**: Watch the AI think and type in real-time.
+    *   **Conversations Sidebar**: Automatically saves your chat history. Resume any conversation instantly.
+    *   **Status Bar**: Real-time tracking of token usage and costs (Session & Monthly).
+    *   **Command History**: Use `Ctrl+Up`/`Ctrl+Down` to cycle through your previous inputs.
+    *   **Multi-line Input**: Paste large blocks of code or text easily.
 
 ## Setup
 
-This project uses `uv` for package management. A `Makefile` is provided to simplify common tasks.
+This project uses `uv` for fast and reliable package management. A `Makefile` is provided for convenience.
 
 ### 1. Initial Setup
 
-To set up the project and install all dependencies:
+Clone the repository and run the install command:
 
 ```sh
 make install
 ```
-This command will:
-*   Create a Python virtual environment (`.venv`).
-*   Ensure `uv` is installed globally.
-*   Install all project dependencies (including `langchain`, `langgraph`, `textual`, etc.) into the virtual environment.
+This creates a virtual environment (`.venv`) and installs all dependencies.
 
 ### 2. Configure API Keys
 
-The agent requires several API keys and credentials:
+Create a `.env` file in the root directory. You can copy `.env.example` if provided, or simply create it.
 
-#### a) Google API Key (for Gemini Models)
+#### Required Keys:
 
-1.  Open the `.env` file.
-2.  Replace `"YOUR_GOOGLE_API_KEY"` with your actual [Google API key](https://ai.google.dev/).
+**a) Google API Key (for Gemini Models)**
+Get it from [Google AI Studio](https://aistudio.google.com/).
+```env
+GOOGLE_API_KEY="AIzaSy..."
+```
 
-    ```
-    GOOGLE_API_KEY="AIzaSy..."
-    ```
+**b) Tavily API Key (for Web Search)**
+Get a free key from [tavily.com](https://tavily.com/).
+```env
+TAVILY_API_KEY="tvly-..."
+```
 
-#### b) Google Sheets OAuth 2.0 Credentials
+**c) OpenAI API Key (Optional)**
+If you want to use OpenAI models.
+```env
+OPENAI_API_KEY="sk-..."
+```
 
-To allow the agent to access Google Sheets on your behalf, you need to provide OAuth 2.0 credentials.
+#### Google Sheets Setup (OAuth 2.0)
 
-1.  **Enable the APIs:** Go to the [Google Cloud Console](https://console.cloud.google.com/) and make sure you have a project selected.
-    *   Enable the **Google Sheets API**.
-    *   Enable the **Google Drive API** (the Sheets API uses this to create new files).
+To manage Sheets, you need a `credentials.json` file:
+1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2.  Enable the **Google Sheets API** and **Google Drive API**.
+3.  Create **OAuth Client ID** credentials (Desktop App).
+4.  Download the JSON file, rename it to `credentials.json`, and place it in the project root.
 
-2.  **Create OAuth Credentials:**
-    *   Go to the [APIs & Services > Credentials](https://console.cloud.google.com/apis/credentials) page.
-    *   Click **+ CREATE CREDENTIALS** and select **OAuth client ID**.
-    *   If prompted, configure the consent screen. For an internal app, you can keep it simple. Select **Desktop app** as the application type.
-    *   Give it a name (e.g., "Michaelmas CLI").
-    *   Click **Create**.
+### 3. Run the Application
 
-3.  **Download Credentials File:**
-    *   After creating the client ID, a modal will appear. Click **DOWNLOAD JSON**.
-    *   Rename the downloaded file to `credentials.json` and place it in the root of this project directory. The file's contents should look similar to the placeholder that was created.
-
-#### c) Tavily API Key (for Web Search)
-
-To enable web search, you need a free API key from Tavily.
-
-1.  **Sign up:** Go to [https://tavily.com/](https://tavily.com/) and create a free account.
-2.  **Get API Key:** Once logged in, you can find your API key on your dashboard.
-3.  **Update `.env`:** Open your `.env` file and replace `"YOUR_TAVILY_API_KEY"` with your actual Tavily API key.
-
-    ```
-    TAVILY_API_KEY="tvly-xxxxxxxxxxxxxxxxxxxxxxxxx"
-    ```
-
-### 3. Run the Application & Authenticate
-
-To launch the Michaelmas TUI application:
+Launch the TUI:
 
 ```sh
 make run
 ```
 
-**First Run Only (for Google Sheets):** The first time you ask the agent to do something with Google Sheets (e.g., "create a new spreadsheet called 'My Test'"), it will automatically open a new tab in your web browser, asking you to authorize access to your Google account. After you approve, it will save a `token.json` file in the project directory so you don't have to log in every time.
+*On the first run using Google Sheets, a browser window will open for you to authorize access.*
 
-## Commands
+## Usage
 
-The TUI supports special slash commands for meta-actions:
+### Chat & Commands
 
--   `/list_models`: Lists all available Gemini and local Ollama models that support content generation. This is useful for debugging and for finding a model name to use with the `/set_model` command.
--   `/set_model <model_name>`: Changes the AI model used for the agent in the current session.
-    -   Example for Gemini: `/set_model gemini-1.5-flash-latest`
-    -   Example for Ollama: `/set_model ollama:llama3`
+Type naturally to chat. Use slash commands to control the system:
 
-### Maintenance Commands
+*   `/help`: Show the list of available commands.
+*   `/new`: Start a fresh conversation.
+*   `/list_models`: List all available Gemini and local Ollama models.
+*   `/set_model <name>`: Switch the active AI model.
+    *   **Gemini**: `/set_model gemini-1.5-flash`
+    *   **Ollama**: `/set_model ollama:llama3` (Requires Ollama to be running locally)
+    *   **OpenAI**: `/set_model openai:gpt-4o`
 
--   `make clean`: Removes the virtual environment, log files, conversation history, and temporary credential tokens. Useful for a fresh start.
+### Keyboard Shortcuts
+
+*   **Enter**: Send message.
+*   **Shift+Enter**: Insert a new line.
+*   **Ctrl+Up / Ctrl+Down**: Navigate command history.
+*   **Ctrl+N**: New conversation.
+*   **Ctrl+C**: Quit.
+
+## Local Models (Ollama)
+
+To use local models:
+1.  Install [Ollama](https://ollama.com/).
+2.  Pull a model: `ollama pull llama3`.
+3.  In Michaelmas: `/set_model ollama:llama3`.
+
+## Maintenance
+
+*   `make clean`: Removes the virtual environment, logs, and temporary files.
+
+## License
+
+MIT License. Copyright (c) 2025 Diego Amor (bl4ckb1rd).

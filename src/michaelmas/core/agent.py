@@ -10,6 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 
 # --- Import Tools ---
@@ -137,6 +138,10 @@ def create_agent_graph(model_name: str = "gemini-2.5-flash"):
         logging.info(f"Using ChatOllama with model: {ollama_model}")
         # Using temperature=0.1 to avoid deterministic loops/garbage output in some quantized models
         llm = ChatOllama(model=ollama_model, temperature=0.1)
+    elif model_name.startswith("openai:"):
+        openai_model = model_name.split(":", 1)[1]
+        logging.info(f"Using ChatOpenAI with model: {openai_model}")
+        llm = ChatOpenAI(model=openai_model, temperature=0)
     else:
         logging.info(f"Using ChatGoogleGenerativeAI with model: {model_name}")
         llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
