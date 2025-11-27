@@ -106,3 +106,9 @@ To use local models:
 ## License
 
 MIT License. Copyright (c) 2025 Diego Amor (bl4ckb1rd).
+
+## Roadmap
+
+- [ ] **Database Integration**: Implement a persistent database (e.g., SQLite/PostgreSQL) for robust conversation storage and retrieval.
+- [ ] **MCP Support**: Add support for the Model Context Protocol (MCP) to standardize context management.
+- [ ] **Expanded Toolset**: Integrate additional tools to enhance agent capabilities (e.g., calendar, email, file system).
