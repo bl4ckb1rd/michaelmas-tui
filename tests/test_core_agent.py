@@ -65,4 +65,4 @@ def test_create_agent_graph_ollama(mocker):
     
     agent.create_agent_graph("ollama:llama3")
     
-    mock_ollama.assert_called_with(model="llama3", temperature=0.1)
+    mock_ollama.assert_called_with(model="llama3", temperature=0.7, num_predict=None)

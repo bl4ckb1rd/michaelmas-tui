@@ -48,6 +48,8 @@ sheets_tools = [
 ]
 general_tools = [web_search, run_shell_command]
 
+ALL_TOOLS_MAP = {t.name: t for t in sheets_tools + general_tools}
+
 # --- 2. Supervisor Agent Logic ---
 
 class SupervisorState(TypedDict):
@@ -113,17 +115,19 @@ def create_agent_node(llm, tools):
         logging.info(f"AGENT ({agent_name}): Running...")
         
         # Conditional tool binding
-        if isinstance(llm, ChatOllama):
-            model_id = llm.model
-            if check_ollama_tool_support(model_id):
-                logging.info(f"AGENT ({agent_name}): Binding tools for capable Ollama model: {model_id}")
-                model = llm.bind_tools(tools)
+        model = llm
+        if tools:
+            if isinstance(llm, ChatOllama):
+                model_id = llm.model
+                if check_ollama_tool_support(model_id):
+                    logging.info(f"AGENT ({agent_name}): Binding tools for capable Ollama model: {model_id}")
+                    model = llm.bind_tools(tools)
+                else:
+                    logging.info(f"AGENT ({agent_name}): Skipping tool binding for Ollama model: {model_id} (No {{ .Tools }} in template)")
+                    model = llm
             else:
-                logging.info(f"AGENT ({agent_name}): Skipping tool binding for Ollama model: {model_id} (No {{ .Tools }} in template)")
-                model = llm
-        else:
-            # Always bind for Gemini/OpenAI
-            model = llm.bind_tools(tools)
+                # Always bind for Gemini/OpenAI
+                model = llm.bind_tools(tools)
             
         response = model.invoke(state["messages"])
         return {"messages": [response]}
@@ -136,7 +140,14 @@ def create_tool_node(tools):
         tool_messages = []
         for tool_call in last_message.tool_calls:
             tool_name = tool_call["name"]
-            tool_to_call = {t.name: t for t in tools}[tool_name]
+            # Only run tools that are actually in the passed list (though binding should prevent others)
+            tool_to_call = next((t for t in tools if t.name == tool_name), None)
+            if not tool_to_call:
+                 tool_messages.append(
+                    ToolMessage(content=f"Error: Tool {tool_name} not found or disabled.", tool_call_id=tool_call["id"])
+                )
+                 continue
+
             try:
                 logging.debug(f"TOOL NODE: Calling {tool_name} with args: {tool_call['args']}")
                 output = tool_to_call.invoke(tool_call["args"])
@@ -156,12 +167,14 @@ def create_tool_node(tools):
 # A cache for compiled agent graphs to avoid recompiling on every call
 _agent_graph_cache = {}
 
-def create_agent_graph(model_name: str = "gemini-2.5-flash", temperature: float = 0.7, max_tokens: int | None = None):
+def create_agent_graph(model_name: str = "gemini-2.5-flash", temperature: float = 0.7, max_tokens: int | None = None, enabled_tools: list[str] | None = None):
     """
     Creates and compiles the agent graph for a given model name, temperature, and max tokens.
     Caches the compiled graph to avoid redundant work.
     """
-    cache_key = (model_name, temperature, max_tokens)
+    # Include enabled_tools in cache key (convert list to tuple for hashability)
+    tools_key = tuple(sorted(enabled_tools)) if enabled_tools is not None else "ALL"
+    cache_key = (model_name, temperature, max_tokens, tools_key)
     if cache_key in _agent_graph_cache:
         return _agent_graph_cache[cache_key]
 
@@ -180,13 +193,21 @@ def create_agent_graph(model_name: str = "gemini-2.5-flash", temperature: float 
     
     supervisor_node = create_supervisor(llm)
     
+    # Filter tools based on enabled_tools
+    if enabled_tools is None:
+        filtered_sheets = sheets_tools
+        filtered_general = general_tools
+    else:
+        filtered_sheets = [t for t in sheets_tools if t.name in enabled_tools]
+        filtered_general = [t for t in general_tools if t.name in enabled_tools]
+
     # Sheets Sub-graph elements
-    sheets_agent_node = create_agent_node(llm, sheets_tools)
-    sheets_tool_node = create_tool_node(sheets_tools)
+    sheets_agent_node = create_agent_node(llm, filtered_sheets)
+    sheets_tool_node = create_tool_node(filtered_sheets)
     
     # General Sub-graph elements (now includes search)
-    general_agent_node = create_agent_node(llm, general_tools)
-    general_tool_node = create_tool_node(general_tools)
+    general_agent_node = create_agent_node(llm, filtered_general)
+    general_tool_node = create_tool_node(filtered_general)
     
     workflow = StateGraph(SupervisorState)
     workflow.add_node("supervisor", supervisor_node)
@@ -245,7 +266,7 @@ def create_agent_graph(model_name: str = "gemini-2.5-flash", temperature: float 
 
 # --- 5. Main execution function ---
 
-async def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", temperature: float = 0.7, max_tokens: int | None = None, history: list[BaseMessage] = []):
+async def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", temperature: float = 0.7, max_tokens: int | None = None, history: list[BaseMessage] = [], enabled_tools: list[str] | None = None):
     """
     Runs the agent with a given prompt, model name, temperature, and max tokens.
     Yields dictionaries with response tokens and usage metadata.
@@ -267,7 +288,7 @@ async def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", temperatu
     # Combine initial context, history, and current prompt
     full_messages = initial_messages + history + [HumanMessage(content=prompt)]
 
-    app = create_agent_graph(model_name, temperature, max_tokens)
+    app = create_agent_graph(model_name, temperature, max_tokens, enabled_tools)
     inputs = {"messages": full_messages}
     
     # Track usage across the stream

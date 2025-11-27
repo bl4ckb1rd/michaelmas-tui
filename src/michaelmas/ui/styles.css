@@ -68,8 +68,12 @@ ModelSelectionScreen, SettingsScreen {
 }
 
 #settings-dialog {
+    width: 60;
+    height: 45;
+    border: thick $primary;
+    background: $surface;
     grid-size: 1;
-    grid-rows: auto auto auto 1fr;
+    grid-gutter: 1;
     padding: 1 2;
 }
 

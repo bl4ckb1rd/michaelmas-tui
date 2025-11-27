@@ -9,13 +9,13 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Grid
 from textual.message import Message
-from textual.widgets import Header, Footer, TextArea, Label, OptionList, Button, Input
+from textual.widgets import Header, Footer, TextArea, Label, OptionList, Button, Input, SelectionList, Checkbox
 from textual.widgets.option_list import Option
 from textual.screen import ModalScreen
 
 from langchain_core.messages import HumanMessage, AIMessage
 
-from michaelmas.core.agent import run_agent
+from michaelmas.core.agent import run_agent, ALL_TOOLS_MAP
 from michaelmas.core import storage
 
 # Load environment variables from .env file
@@ -24,7 +24,7 @@ load_dotenv()
 # Pricing per 1M tokens (approximate)
 PRICING = {
     "gemini-2.5-flash": {"input": 0.075, "output": 0.30},
-    "gemini-2.5-flash-lite": {"input": 0.075, "output": 0.30}, 
+    "gemini-2.5-flash-lite": {"input": 0.075, "output": 0.30},
     "gemini-2.5-pro": {"input": 3.50, "output": 10.50},
     "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
     "gemini-1.5-pro": {"input": 3.50, "output": 10.50},
@@ -102,14 +102,22 @@ class ModelSelectionScreen(ModalScreen[str]):
 class SettingsScreen(ModalScreen[dict]):
     """A modal screen to configure settings."""
 
-    def __init__(self, current_temp: float, current_max_tokens: int | None):
+    def __init__(self, current_temp: float, current_max_tokens: int | None, all_tools: list[str] = [], enabled_tools: list[str] = [], tools_enabled_master: bool = True):
         super().__init__()
         self.current_temp = current_temp
         self.current_max_tokens = current_max_tokens
+        self.all_tools = all_tools
+        self.enabled_tools = enabled_tools
+        self.tools_enabled_master = tools_enabled_master
 
     def compose(self) -> ComposeResult:
         max_tokens_val = str(self.current_max_tokens) if self.current_max_tokens is not None else "" 
         
+        # Prepare tool selections
+        tool_selections = []
+        for tool in self.all_tools:
+            tool_selections.append((tool, tool, tool in self.enabled_tools))
+
         yield Grid(
             Label("LLM Settings", id="settings-title"),
             
@@ -119,9 +127,19 @@ class SettingsScreen(ModalScreen[dict]):
             Label("Max Output Tokens (Optional):"),
             Input(max_tokens_val, id="tokens-input", type="number", placeholder="e.g., 2048"),
             
+            Label("Tool Configuration:", id="tools-header"),
+            Checkbox("Enable Tool Use", value=self.tools_enabled_master, id="master-tool-check"),
+            
+            Label("Select Tools:", id="tools-label"),
+            SelectionList(*tool_selections, id="tools-list", disabled=not self.tools_enabled_master),
+
             Button("Save", variant="primary", id="save-btn"),
             id="settings-dialog",
         )
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "master-tool-check":
+            self.query_one("#tools-list", SelectionList).disabled = not event.value
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save-btn":
@@ -134,7 +152,15 @@ class SettingsScreen(ModalScreen[dict]):
                 tokens_val_str = self.query_one("#tokens-input", Input).value
                 tokens_val = int(tokens_val_str) if tokens_val_str else None
                 
-                self.dismiss({"temperature": temp_val, "max_tokens": tokens_val})
+                selected_tools = self.query_one("#tools-list", SelectionList).selected
+                master_enabled = self.query_one("#master-tool-check", Checkbox).value
+
+                self.dismiss({
+                    "temperature": temp_val, 
+                    "max_tokens": tokens_val,
+                    "enabled_tools": selected_tools,
+                    "tools_enabled_master": master_enabled
+                })
             except ValueError:
                 self.app.notify("Invalid input values", severity="error")
     
@@ -143,7 +169,7 @@ class SettingsScreen(ModalScreen[dict]):
         self.dismiss(None)
 
 class TuiApp(App):
-    """A Textual app to chat with a LangGraph agent."""
+# ... (rest of TuiApp) ...    """A Textual app to chat with a LangGraph agent."""
 
     TITLE = "Michaelmas"
     CSS_PATH = "styles.css"
@@ -200,6 +226,8 @@ class TuiApp(App):
 
         # Model State
         self.available_models: list[str] = []
+        self.enabled_tools: list[str] = list(ALL_TOOLS_MAP.keys())
+        self.tools_enabled_master: bool = True
 
         self.load_conversations_into_sidebar()
         
@@ -399,9 +427,13 @@ class TuiApp(App):
         model = self.current_model
         temperature = self.llm_temperature
         max_tokens = self.llm_max_tokens
+        
+        # Determine enabled tools based on master switch
+        enabled_tools = self.enabled_tools if self.tools_enabled_master else []
+        
         history = self.conversation_history.copy() # Pass copy of history
 
-        logging.info(f"Running agent with model: {model}, temp: {temperature}, max_tok: {max_tokens}")
+        logging.info(f"Running agent with model: {model}, temp: {temperature}, max_tok: {max_tokens}, tools: {len(enabled_tools)}")
         
         self.call_from_thread(self.write_to_log, "[bold green]Agent:[/ ]") 
         
@@ -410,7 +442,7 @@ class TuiApp(App):
         interaction_cost = 0.0
 
         try:
-            async for chunk in run_agent(prompt, model_name=model, temperature=temperature, max_tokens=max_tokens, history=history):
+            async for chunk in run_agent(prompt, model_name=model, temperature=temperature, max_tokens=max_tokens, history=history, enabled_tools=enabled_tools):
                 if chunk["type"] == "token":
                     text = chunk["content"]
                     full_response += text
@@ -484,7 +516,8 @@ class TuiApp(App):
 
     def select_settings_worker(self) -> None:
         """Opens the settings modal."""
-        self.call_from_thread(self.app.push_screen, SettingsScreen(self.llm_temperature, self.llm_max_tokens), self.on_settings_changed)
+        all_tools = list(ALL_TOOLS_MAP.keys())
+        self.call_from_thread(self.app.push_screen, SettingsScreen(self.llm_temperature, self.llm_max_tokens, all_tools, self.enabled_tools, self.tools_enabled_master), self.on_settings_changed)
 
     def list_models_worker(self) -> None:
         """Provides a list of available models (Gemini + Ollama)."""
@@ -543,9 +576,21 @@ class TuiApp(App):
             self.llm_temperature = settings.get("temperature", 0.0)
             self.llm_max_tokens = settings.get("max_tokens")
             
+            if "enabled_tools" in settings:
+                self.enabled_tools = settings["enabled_tools"]
+            
+            if "tools_enabled_master" in settings:
+                self.tools_enabled_master = settings["tools_enabled_master"]
+
             log_msg = f"[bold yellow]INFO:[/ ] Settings updated: T={self.llm_temperature}"
             if self.llm_max_tokens:
                 log_msg += f", MaxTokens={self.llm_max_tokens}"
+            
+            if not self.tools_enabled_master:
+                log_msg += ", Tools=DISABLED"
+            elif self.enabled_tools is not None:
+                log_msg += f", Tools={len(self.enabled_tools)}"
+            
             self.write_to_log(log_msg)
             
             self.update_status_bar(0.0)
@@ -586,7 +631,7 @@ class TuiApp(App):
 - [bold]/help[/ ]: Show this help message.
 - [bold]/new[/ ]: Start a new conversation.
 - [bold]/model[/ ]: Open the model selector to switch AI models.
-- [bold]/settings[/ ]: Configure LLM settings (e.g., temperature).
+- [bold]/settings[/ ]: Configure LLM settings (e.g., temperature, tools).
 """
                 self.write_to_log(help_text)
                 self.reset_input()
