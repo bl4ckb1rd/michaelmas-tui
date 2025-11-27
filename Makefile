@@ -3,6 +3,8 @@
 install:
 	@echo "Installing dependencies with uv..."
 	@uv sync
+	@echo "Installing pre-commit hooks..."
+	@uv run pre-commit install
 
 run:
 	@echo "Running Michaelmas app..."

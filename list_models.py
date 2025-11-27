@@ -1,12 +1,9 @@
 import os
 from dotenv import load_dotenv
-from google.auth import default
-from google.auth.transport.requests import Request
-from google.oauth2 import service_account
-import google.generativeai as genai
 
 # Load environment variables from .env file
 load_dotenv()
+
 
 def list_all_models():
     """
@@ -19,11 +16,12 @@ def list_all_models():
         return
 
     print("Attempting to list models using google-generativeai...")
-    
+
     try:
         # We try to import here because it might have been installed by previous steps
         # or we can try to install it.
         import google.generativeai as genai
+
         genai.configure(api_key=api_key)
 
         print("\n--- Available Models ---")
@@ -33,17 +31,22 @@ def list_all_models():
             print(f"Name: {m.name}")
             print(f"Supported generation methods: {m.supported_generation_methods}")
             print("-" * 20)
-        
+
         if not found_any:
-            print("No models found. This suggests an issue with the API key or project configuration.")
+            print(
+                "No models found. This suggests an issue with the API key or project configuration."
+            )
         else:
-            print("\nSuccess! Please use one of the 'Name' values above in your agent configuration.")
+            print(
+                "\nSuccess! Please use one of the 'Name' values above in your agent configuration."
+            )
 
     except ImportError:
         print("The google-generativeai library is not installed.")
         print("Please run: uv add google-generativeai")
     except Exception as e:
         print(f"An error occurred: {e}")
+
 
 if __name__ == "__main__":
     list_all_models()

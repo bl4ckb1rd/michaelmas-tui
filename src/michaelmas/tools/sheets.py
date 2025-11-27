@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
+
 def get_sheets_service():
     """
     Authenticates with the Google Sheets API and returns a service object.
@@ -35,13 +36,14 @@ def get_sheets_service():
         # Save the credentials for the next run
         with open("token.json", "w") as token:
             token.write(creds.to_json())
-    
+
     try:
         service = build("sheets", "v4", credentials=creds)
         return service
     except HttpError as err:
         print(err)
         return None
+
 
 @tool
 def create_spreadsheet(title: str) -> str:
@@ -52,7 +54,7 @@ def create_spreadsheet(title: str) -> str:
     service = get_sheets_service()
     if not service:
         return "Failed to get Google Sheets service."
-    
+
     spreadsheet = {"properties": {"title": title}}
     try:
         spreadsheet = (
@@ -63,6 +65,7 @@ def create_spreadsheet(title: str) -> str:
         return f"Spreadsheet created with ID {spreadsheet.get('spreadsheetId')} and URL {spreadsheet.get('spreadsheetUrl')}"
     except HttpError as err:
         return f"An error occurred: {err}"
+
 
 @tool
 def get_sheet_data(spreadsheet_id: str, range_name: str) -> list | str:
@@ -76,14 +79,13 @@ def get_sheet_data(spreadsheet_id: str, range_name: str) -> list | str:
     try:
         sheet = service.spreadsheets()
         result = (
-            sheet.values()
-            .get(spreadsheetId=spreadsheet_id, range=range_name)
-            .execute()
+            sheet.values().get(spreadsheetId=spreadsheet_id, range=range_name).execute()
         )
         values = result.get("values", [])
         return values
     except HttpError as err:
         return f"An error occurred: {err}"
+
 
 @tool
 def update_sheet_data(spreadsheet_id: str, range_name: str, values: list[list]) -> str:
@@ -112,6 +114,7 @@ def update_sheet_data(spreadsheet_id: str, range_name: str, values: list[list]) 
     except HttpError as err:
         return f"An error occurred: {err}"
 
+
 @tool
 def append_to_sheet(spreadsheet_id: str, range_name: str, values: list[list]) -> str:
     """
@@ -138,12 +141,13 @@ def append_to_sheet(spreadsheet_id: str, range_name: str, values: list[list]) ->
     except HttpError as err:
         return f"An error occurred: {err}"
 
+
 # You will need to create this file based on the instructions in the README.
 # This is just a placeholder to prevent errors if the file doesn't exist yet.
 if not os.path.exists("credentials.json"):
     with open("credentials.json", "w") as f:
         f.write(
-"""
+            """
 {
     "installed": {
         "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
