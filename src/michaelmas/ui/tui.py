@@ -118,12 +118,17 @@ class TuiApp(App):
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         yield Header()
+        
+        # Main Body (Horizontal Split: Sidebar + Chat)
         with Container(id="app-grid"):
             yield OptionList(id="sidebar")
             with Vertical(id="main-content"):
                 yield TextArea(id="log", read_only=True, language="log")
                 yield ChatInput(id="input", show_line_numbers=False)
-                yield Label("Cost: $0.0000 | Session: $0.0000 | Month: $0.0000 | Tokens: 0", id="status")
+        
+        # Global Status Bar
+        yield Label("Initializing...", id="status")
+        
         yield Footer()
     
     def on_mount(self) -> None:
@@ -150,14 +155,14 @@ class TuiApp(App):
 
         self.load_conversations_into_sidebar()
         
-        # Refresh sidebar every 10 seconds
-        self.set_interval(10, self.load_conversations_into_sidebar)
-        
         self.write_to_log("[bold green]Agent:[/ ] Hello! How can I assist you today?")
         self.write_to_log(f"[bold yellow]INFO:[/ ] Using model: {self.current_model}")
         
         self.update_status_bar(0.0) # Initialize with 0 for last cost
         self.query_one(ChatInput).focus()
+        
+        # Refresh sidebar every 10 seconds
+        self.set_interval(10, self.load_conversations_into_sidebar)
 
     def on_chat_input_history_prev(self) -> None:
         """Handle Ctrl+Up."""
@@ -195,9 +200,12 @@ class TuiApp(App):
 
     def update_status_bar(self, last_cost: float):
         """Updates the status bar with current metrics."""
+        model_display = f"[bold]{self.current_model}[/bold]"
         status_text = (
-            f"Last: ${last_cost:.6f} | Conv: ${self.conversation_cost:.6f} | "
-            f"Tokens: {self.conversation_tokens} | Month: ${self.monthly_cost:.6f}"
+            f"Model: {model_display} | "
+            f"Last: [green]${last_cost:.6f}[/] | "
+            f"Conv: [blue]${self.conversation_cost:.6f}[/] ({self.conversation_tokens} tok) | "
+            f"Month: [red]${self.monthly_cost:.6f}[/]"
         )
         self.query_one("#status", Label).update(status_text)
 
@@ -215,6 +223,10 @@ class TuiApp(App):
     def load_conversations_into_sidebar(self):
         """Loads conversations from storage into the sidebar, grouped by date."""
         sidebar = self.query_one("#sidebar", OptionList)
+        
+        # Store current selection index to restore if possible?
+        # OptionList doesn't easily support "restore by ID". Simpler to just reload.
+        
         sidebar.clear_options()
         
         all_conversations = storage.list_conversations()
@@ -267,7 +279,7 @@ class TuiApp(App):
             
             for conv in convs:
                 title = conv.get("title", "Untitled")
-                # Clean title: Remove newlines or excessive length if needed
+                # Clean title
                 title = title.split("\n")[0][:30] 
                 
                 sidebar.add_option(Option(title, id=conv["id"]))
@@ -443,10 +455,10 @@ class TuiApp(App):
         finally:
             self.call_from_thread(self.reset_input)
 
-    def select_model_worker(self) -> None:
-        """Fetches models and opens the selection modal."""
-        logging.info("Fetching models for selection.")
-        
+    def list_models_worker(self) -> None:
+        """Provides a list of available models (Gemini + Ollama)."""
+        logging.info("Listing available models.")
+        models_info = "[bold cyan]Available Gemini Models (for your API key):[/]\n"
         gemini_models = [
             "gemini-2.5-pro",
             "gemini-2.5-flash",
@@ -454,6 +466,7 @@ class TuiApp(App):
             "gemini-3-pro-preview",
         ]
         
+        # Add local Ollama models
         ollama_models = []
         try:
             ollama_response = ollama.list()
@@ -461,13 +474,34 @@ class TuiApp(App):
                 for m in ollama_response['models']:
                     name = m['model']
                     ollama_models.append(f"ollama:{name}")
+            else:
+                 models_info += "[dim]No models found in Ollama response.[/]\n"
         except Exception as e:
             logging.warning(f"Failed to list Ollama models: {e}")
+            models_info += f"[dim]Could not connect to Ollama ({e}). Make sure it is running.[/]\n"
         
+        # Combine all models
         all_models = gemini_models + ollama_models
         
-        # Push the screen from the worker, but we must ensure we're calling App methods safely.
-        self.call_from_thread(self.app.push_screen, ModelSelectionScreen(all_models), self.on_model_selected)
+        # Format for display
+        for model_name in all_models:
+            models_info += f"- `{model_name}`\n"
+
+        models_info += "\n[bold yellow]Note:[/ ] Use `/set_model <name>` to switch."
+        
+        # Directly update UI from worker using call_from_thread
+        self.call_from_thread(self.write_to_log, models_info)
+        self.call_from_thread(self.set_available_models, all_models)
+        self.call_from_thread(self.reset_input)
+
+
+    # --- Event Handlers & UI Logic ---
+
+    def on_models_listed(self, message: ModelsListed) -> None:
+        """Handles the ModelsListed message to store and display available models."""
+        self.available_models = message.models
+        self.write_to_log(message.info_text) # Display the info text
+        self.reset_input() # Reset input focus after listing
 
     def on_model_selected(self, model_name: str) -> None:
         """Callback for when a model is selected from the modal."""
@@ -475,6 +509,7 @@ class TuiApp(App):
             self.current_model = model_name
             self.write_to_log(f"[bold yellow]INFO:[/ ] Model set to: {self.current_model}")
             logging.info(f"Model switched to: {self.current_model}")
+            self.update_status_bar(0.0) # Refresh status bar to show new model
         
         self.reset_input()
 
