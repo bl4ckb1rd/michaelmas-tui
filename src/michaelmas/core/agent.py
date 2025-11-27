@@ -4,6 +4,7 @@ from typing import TypedDict, Annotated, Sequence, Literal
 import operator
 from datetime import datetime
 from dotenv import load_dotenv
+import ollama
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -81,16 +82,36 @@ def create_supervisor(llm):
 
 # --- 3. Agent Nodes ---
 
+# Helper to check Ollama tool support dynamically
+def check_ollama_tool_support(model_name: str) -> bool:
+    """
+    Checks if an Ollama model supports tools by inspecting its template.
+    """
+    try:
+        model_info = ollama.show(model_name)
+        template = model_info.get('template', '')
+        # Ollama standard for tools is the presence of {{ .Tools }} in the template
+        return "{{ .Tools }}" in template
+    except Exception as e:
+        logging.warning(f"Failed to check tool support for {model_name}: {e}")
+        return False
+
 def create_agent_node(llm, tools):
     def agent_node(state: SupervisorState):
         agent_name = tools[0].name.split('_')[0] if tools else "General"
         logging.info(f"AGENT ({agent_name}): Running...")
         
-        # Conditional tool binding: Skip for Ollama to avoid "GGGG" garbage output
+        # Conditional tool binding
         if isinstance(llm, ChatOllama):
-            logging.info(f"AGENT ({agent_name}): Skipping tool binding for Ollama model.")
-            model = llm
+            model_id = llm.model
+            if check_ollama_tool_support(model_id):
+                logging.info(f"AGENT ({agent_name}): Binding tools for capable Ollama model: {model_id}")
+                model = llm.bind_tools(tools)
+            else:
+                logging.info(f"AGENT ({agent_name}): Skipping tool binding for Ollama model: {model_id} (No {{ .Tools }} in template)")
+                model = llm
         else:
+            # Always bind for Gemini/OpenAI
             model = llm.bind_tools(tools)
             
         response = model.invoke(state["messages"])

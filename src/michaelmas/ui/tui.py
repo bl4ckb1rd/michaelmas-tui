@@ -1,5 +1,6 @@
 import os
 import logging
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from rich.text import Text
 import ollama
@@ -9,6 +10,7 @@ from textual.binding import Binding
 from textual.containers import Container, Vertical, Grid
 from textual.message import Message
 from textual.widgets import Header, Footer, TextArea, Label, OptionList
+from textual.widgets.option_list import Option
 from textual.screen import ModalScreen
 
 from langchain_core.messages import HumanMessage, AIMessage
@@ -27,6 +29,9 @@ PRICING = {
     "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
     "gemini-1.5-pro": {"input": 3.50, "output": 10.50},
     "gemini-1.0-pro": {"input": 0.50, "output": 1.50},
+    "openai:gpt-4o": {"input": 5.00, "output": 15.00},
+    "openai:gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "openai:gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
 }
 
 class ChatInput(TextArea):
@@ -133,6 +138,8 @@ class TuiApp(App):
         # Conversation State
         self.current_conversation_id = None
         self.conversation_history = [] 
+        self.conversation_cost = 0.0
+        self.conversation_tokens = 0
         
         # Command History
         self.command_history = []
@@ -146,7 +153,7 @@ class TuiApp(App):
         self.write_to_log("[bold green]Agent:[/ ] Hello! How can I assist you today?")
         self.write_to_log(f"[bold yellow]INFO:[/ ] Using model: {self.current_model}")
         
-        self.update_status_bar(0.0)
+        self.update_status_bar(0.0) # Initialize with 0 for last cost
         self.query_one(ChatInput).focus()
 
     def on_chat_input_history_prev(self) -> None:
@@ -185,25 +192,84 @@ class TuiApp(App):
 
     def update_status_bar(self, last_cost: float):
         """Updates the status bar with current metrics."""
-        status_text = f"Last: ${last_cost:.6f} | Session: ${self.session_total_cost:.6f} | Month: ${self.monthly_cost:.6f} | Tokens: {self.session_total_tokens}"
+        status_text = (
+            f"Last: ${last_cost:.6f} | Conv: ${self.conversation_cost:.6f} | "
+            f"Tokens: {self.conversation_tokens} | Month: ${self.monthly_cost:.6f}"
+        )
         self.query_one("#status", Label).update(status_text)
 
     def action_new_chat(self) -> None:
         """Starts a new conversation."""
         self.current_conversation_id = None
         self.conversation_history = []
+        self.conversation_cost = 0.0
+        self.conversation_tokens = 0
         self.query_one("#log", TextArea).clear()
         self.write_to_log("[bold green]Agent:[/ ] Started a new conversation.")
         self.load_conversations_into_sidebar() # Refresh list (to unselect)
+        self.update_status_bar(0.0) # Reset status bar
 
     def load_conversations_into_sidebar(self):
-        """Loads conversations from storage into the sidebar."""
+        """Loads conversations from storage into the sidebar, grouped by date."""
         sidebar = self.query_one("#sidebar", OptionList)
         sidebar.clear_options()
-        conversations = storage.list_conversations()
-        for conv in conversations:
-            sidebar.add_option(f"{conv['title']} ({conv['id'][:4]})") 
-        self.conversations_map = conversations 
+        
+        all_conversations = storage.list_conversations()
+        if not all_conversations:
+            return
+
+        # buckets
+        groups = {
+            "Today": [],
+            "Yesterday": [],
+            "Previous 7 Days": [],
+            "Previous 30 Days": [],
+            "Older": []
+        }
+        
+        now = datetime.now()
+        today = now.date()
+        yesterday = today - timedelta(days=1)
+        
+        for conv in all_conversations:
+            try:
+                updated_at = datetime.fromisoformat(conv["updated_at"]).date()
+            except (ValueError, TypeError):
+                groups["Older"].append(conv)
+                continue
+
+            if updated_at == today:
+                groups["Today"].append(conv)
+            elif updated_at == yesterday:
+                groups["Yesterday"].append(conv)
+            elif updated_at > today - timedelta(days=7):
+                groups["Previous 7 Days"].append(conv)
+            elif updated_at > today - timedelta(days=30):
+                groups["Previous 30 Days"].append(conv)
+            else:
+                groups["Older"].append(conv)
+
+        # Flatten for display and mapping
+        self.conversations_map = {} 
+        current_index = 0
+        
+        for group_name, convs in groups.items():
+            if not convs:
+                continue
+            
+            # Add Header
+            sidebar.add_option(Option(f"── {group_name} ──", disabled=True))
+            self.conversations_map[current_index] = None # Header is not clickable
+            current_index += 1
+            
+            for conv in convs:
+                title = conv.get("title", "Untitled")
+                # Clean title: Remove newlines or excessive length if needed
+                title = title.split("\n")[0][:30] 
+                
+                sidebar.add_option(Option(title, id=conv["id"]))
+                self.conversations_map[current_index] = conv
+                current_index += 1
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Handle sidebar selection (Main conversation list)."""
@@ -212,11 +278,9 @@ class TuiApp(App):
             if event.option_index is None:
                 return
             
-            try:
-                selected_conv = self.conversations_map[event.option_index]
-                self.load_chat(selected_conv["id"])
-            except IndexError:
-                pass
+            selected_item = self.conversations_map.get(event.option_index)
+            if selected_item: # It's a conversation, not a header
+                self.load_chat(selected_item["id"])
 
     def load_chat(self, conversation_id: str):
         """Loads a specific conversation."""
@@ -227,6 +291,8 @@ class TuiApp(App):
 
         self.current_conversation_id = data["id"]
         self.conversation_history = []
+        self.conversation_cost = 0.0 # Reset for this specific load
+        self.conversation_tokens = 0 # Reset for this specific load
         self.query_one("#log", TextArea).clear()
         
         # Replay messages
@@ -237,14 +303,20 @@ class TuiApp(App):
             elif msg["type"] == "ai":
                 # Restore metadata
                 additional_kwargs = {}
-                if "cost" in msg:
-                    additional_kwargs["cost"] = msg["cost"]
-                if "usage" in msg:
-                    additional_kwargs["usage"] = msg["usage"]
+                cost_per_msg = msg.get("cost", 0.0) # Extract cost from loaded msg
+                usage_per_msg = msg.get("usage", {}) # Extract usage from loaded msg
+                
+                additional_kwargs["cost"] = cost_per_msg
+                additional_kwargs["usage"] = usage_per_msg
                 
                 self.conversation_history.append(AIMessage(content=msg["content"], additional_kwargs=additional_kwargs))
                 self.write_to_log(f"[bold green]Agent:[/ ] {msg['content']}")
+                
+                # Accumulate for conversation totals
+                self.conversation_cost += cost_per_msg
+                self.conversation_tokens += usage_per_msg.get("total_tokens", 0)
         
+        self.update_status_bar(0.0) # No "last" cost on load, but update conv totals
         self.write_to_log(f"[bold yellow]INFO:[/ ] Loaded conversation: {data.get('title')}")
 
     def save_current_chat(self):
@@ -306,7 +378,7 @@ class TuiApp(App):
         logging.info(f"Running agent with model: {model}")
         
         # Start the log entry for the agent
-        self.call_from_thread(self.write_to_log, "[bold green]Agent:[/]") 
+        self.call_from_thread(self.write_to_log, "[bold green]Agent:[/ ]") 
         
         full_response = ""
         usage = {}
@@ -340,6 +412,8 @@ class TuiApp(App):
             self.session_total_cost += interaction_cost
             self.session_total_tokens += total_tokens
             self.monthly_cost += interaction_cost
+            self.conversation_cost += interaction_cost
+            self.conversation_tokens += total_tokens
             
             # Update history with metadata
             self.conversation_history.append(HumanMessage(content=prompt))
@@ -390,7 +464,6 @@ class TuiApp(App):
         all_models = gemini_models + ollama_models
         
         # Push the screen from the worker, but we must ensure we're calling App methods safely.
-        # push_screen is thread safe in Textual.
         self.call_from_thread(self.app.push_screen, ModelSelectionScreen(all_models), self.on_model_selected)
 
     def on_model_selected(self, model_name: str) -> None:
