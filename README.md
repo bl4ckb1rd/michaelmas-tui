@@ -28,7 +28,7 @@ Clone the repository and run the install command:
 ```sh
 make install
 ```
-This creates a virtual environment (`.venv`) and installs all dependencies.
+This uses `uv` to create a virtual environment and install all dependencies defined in `pyproject.toml`.
 
 ### 2. Configure API Keys
 
