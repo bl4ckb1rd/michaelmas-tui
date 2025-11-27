@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from rich.text import Text
 import ollama
+from openai import OpenAI
+from google.ai.generativelanguage import ModelServiceClient
+from google.api_core.client_options import ClientOptions
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -228,6 +231,10 @@ class TuiApp(App):
         self.available_models: list[str] = []
         self.enabled_tools: list[str] = list(ALL_TOOLS_MAP.keys())
         self.tools_enabled_master: bool = True
+        
+        # Model Cache
+        self.cached_gemini_models: list[str] | None = None
+        self.cached_openai_models: list[str] | None = None
 
         self.load_conversations_into_sidebar()
         
@@ -493,13 +500,46 @@ class TuiApp(App):
         """Fetches models and opens the selection modal."""
         logging.info("Fetching models for selection.")
         
-        gemini_models = [
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-3-pro-preview",
-        ]
+        # 1. Gemini Models
+        gemini_models = []
+        if self.cached_gemini_models is not None:
+            gemini_models = self.cached_gemini_models
+        elif "GOOGLE_API_KEY" in os.environ:
+            try:
+                client = ModelServiceClient(
+                    client_options=ClientOptions(api_key=os.environ["GOOGLE_API_KEY"])
+                )
+                for m in client.list_models():
+                    if "generateContent" in m.supported_generation_methods:
+                        name = m.name.replace("models/", "")
+                        gemini_models.append(name)
+                self.cached_gemini_models = gemini_models
+            except Exception as e:
+                logging.warning(f"Failed to list Gemini models: {e}")
         
+        if not gemini_models: # Fallback
+            gemini_models = [
+                "gemini-2.5-pro",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-3-pro-preview",
+            ]
+
+        # 2. OpenAI Models
+        openai_models = []
+        if self.cached_openai_models is not None:
+            openai_models = self.cached_openai_models
+        elif "OPENAI_API_KEY" in os.environ:
+            try:
+                client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+                for m in client.models.list():
+                    if m.id.startswith("gpt"):
+                        openai_models.append(f"openai:{m.id}")
+                self.cached_openai_models = openai_models
+            except Exception as e:
+                logging.warning(f"Failed to list OpenAI models: {e}")
+
+        # 3. Ollama Models
         ollama_models = []
         try:
             ollama_response = ollama.list()
@@ -510,7 +550,7 @@ class TuiApp(App):
         except Exception as e:
             logging.warning(f"Failed to list Ollama models: {e}")
         
-        all_models = gemini_models + ollama_models
+        all_models = sorted(list(set(gemini_models))) + sorted(openai_models) + sorted(ollama_models)
         
         self.call_from_thread(self.app.push_screen, ModelSelectionScreen(all_models), self.on_model_selected)
 

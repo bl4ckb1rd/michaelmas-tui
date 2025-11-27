@@ -10,6 +10,7 @@
     *   **Web Research**: Autonomous web searching using **Tavily** to find real-time information.
     *   **Google Sheets Management**: Create, read, and update Google Sheets directly from the chat.
 *   **Advanced TUI**:
+    *   **Tool Management**: Enable/disable specific tools or all tools globally via the settings menu.
     *   **Streaming Responses**: Watch the AI think and type in real-time.
     *   **Conversations Sidebar**: Automatically saves your chat history. Resume any conversation instantly.
     *   **Status Bar**: Real-time tracking of token usage and costs (Session & Monthly).
@@ -79,11 +80,9 @@ Type naturally to chat. Use slash commands to control the system:
 
 *   `/help`: Show the list of available commands.
 *   `/new`: Start a fresh conversation.
-*   `/list_models`: List all available Gemini and local Ollama models.
-*   `/set_model <name>`: Switch the active AI model.
-    *   **Gemini**: `/set_model gemini-1.5-flash`
-    *   **Ollama**: `/set_model ollama:llama3` (Requires Ollama to be running locally)
-    *   **OpenAI**: `/set_model openai:gpt-4o`
+*   `/settings`: Configure LLM settings (e.g., temperature, max output tokens, and tool availability).
+*   `/model`: Open the model selector to switch AI models.
+*   `/list_models`: List all available Gemini and local Ollama models (use `/model` to select).
 
 ### Keyboard Shortcuts
 
@@ -98,7 +97,7 @@ Type naturally to chat. Use slash commands to control the system:
 To use local models:
 1.  Install [Ollama](https://ollama.com/).
 2.  Pull a model: `ollama pull llama3`.
-3.  In Michaelmas: `/set_model ollama:llama3`.
+3.  In Michaelmas: Use `/model` command and select your Ollama model.
 
 ## Maintenance
 
