@@ -1,49 +1,50 @@
 Screen {
-    overflow: hidden;
-    background: $background-darken-3;
+    background: $background-darken-3; /* Deep void */
 }
 
 #app-grid {
     layout: horizontal;
     height: 1fr;
+    padding: 1; /* Overall padding around the main content area */
 }
 
 #sidebar {
     width: 35;
-    height: 100%;
+    height: 1fr; /* Fill parent height */
     background: $surface;
-    border: round $primary;
-    dock: left;
-    margin: 1 0 1 1;
+    border: round $primary; /* Visible border */
+    margin-right: 1; /* Space between sidebar and main-content */
 }
 
 #main-content {
     width: 1fr;
-    height: 100%;
-    margin: 1 1 0 1;
+    height: 1fr; /* Fill parent height */
 }
 
 #log {
     height: 1fr;
     background: $surface;
     border: round $primary;
-    margin-bottom: 1;
+    margin-bottom: 1; /* Space between log and input */
+    padding: 1; /* Internal padding for content */
 }
 
 #input {
-    height: 8;
+    height: 8; /* Text + Borders + Padding */
     background: $surface;
     border: round $primary;
+    padding: 1; /* Internal padding for content */
 }
 
 #status {
-    height: 3;
+    height: 3; /* Text + Borders + Padding */
     width: 100%;
     background: $surface;
     color: $text;
     border: round $primary;
     content-align: center middle;
-    margin: 1 1 1 1;
+    margin: 1 1 1 1; /* Floating at bottom with margin from screen edges */
+    padding: 0 1; /* Internal padding for content */
 }
 
 /* --- Model Selection Modal --- */
