@@ -22,6 +22,7 @@ from michaelmas.tools.sheets import (
     append_to_sheet,
 )
 from michaelmas.tools.search import web_search
+from michaelmas.tools.shell import run_shell_command
 
 # Load environment variables from .env file
 load_dotenv()
@@ -33,7 +34,7 @@ if "GOOGLE_API_KEY" not in os.environ:
 # --- System Prompt ---
 DEFAULT_SYSTEM_PROMPT = """
 You are a helpful and versatile AI assistant. You can use tools to perform tasks.
-You are equipped to handle Google Sheets operations and search the web for information.
+You are equipped to handle Google Sheets operations, search the web for information, and execute shell commands on the local system.
 Your goal is to assist the user by understanding their requests and utilizing the available tools efficiently.
 Always respond in a concise and helpful manner.
 """
@@ -45,7 +46,7 @@ sheets_tools = [
     update_sheet_data,
     append_to_sheet,
 ]
-general_tools = [web_search]
+general_tools = [web_search, run_shell_command]
 
 # --- 2. Supervisor Agent Logic ---
 
@@ -145,27 +146,27 @@ def create_tool_node(tools):
 # A cache for compiled agent graphs to avoid recompiling on every call
 _agent_graph_cache = {}
 
-def create_agent_graph(model_name: str = "gemini-2.5-flash"):
+def create_agent_graph(model_name: str = "gemini-2.5-flash", temperature: float = 0.7, max_tokens: int | None = None):
     """
-    Creates and compiles the agent graph for a given model name.
+    Creates and compiles the agent graph for a given model name, temperature, and max tokens.
     Caches the compiled graph to avoid redundant work.
     """
-    if model_name in _agent_graph_cache:
-        return _agent_graph_cache[model_name]
+    cache_key = (model_name, temperature, max_tokens)
+    if cache_key in _agent_graph_cache:
+        return _agent_graph_cache[cache_key]
 
     # Instantiate the appropriate LLM
     if model_name.startswith("ollama:"):
         ollama_model = model_name.split(":", 1)[1]
-        logging.info(f"Using ChatOllama with model: {ollama_model}")
-        # Using temperature=0.1 to avoid deterministic loops/garbage output in some quantized models
-        llm = ChatOllama(model=ollama_model, temperature=0.1)
+        logging.info(f"Using ChatOllama with model: {ollama_model}, temperature: {temperature}, max_tokens: {max_tokens}")
+        llm = ChatOllama(model=ollama_model, temperature=temperature, num_predict=max_tokens)
     elif model_name.startswith("openai:"):
         openai_model = model_name.split(":", 1)[1]
-        logging.info(f"Using ChatOpenAI with model: {openai_model}")
-        llm = ChatOpenAI(model=openai_model, temperature=0)
+        logging.info(f"Using ChatOpenAI with model: {openai_model}, temperature: {temperature}, max_tokens: {max_tokens}")
+        llm = ChatOpenAI(model=openai_model, temperature=temperature, max_tokens=max_tokens)
     else:
-        logging.info(f"Using ChatGoogleGenerativeAI with model: {model_name}")
-        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
+        logging.info(f"Using ChatGoogleGenerativeAI with model: {model_name}, temperature: {temperature}, max_tokens: {max_tokens}")
+        llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature, max_output_tokens=max_tokens)
     
     supervisor_node = create_supervisor(llm)
     
@@ -229,14 +230,14 @@ def create_agent_graph(model_name: str = "gemini-2.5-flash"):
     workflow.add_edge("tool_general", "agent_general") # Return to agent to digest tool output
 
     graph = workflow.compile()
-    _agent_graph_cache[model_name] = graph
+    _agent_graph_cache[cache_key] = graph
     return graph
 
 # --- 5. Main execution function ---
 
-async def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", history: list[BaseMessage] = []):
+async def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", temperature: float = 0.7, max_tokens: int | None = None, history: list[BaseMessage] = []):
     """
-    Runs the agent with a given prompt and model name.
+    Runs the agent with a given prompt, model name, temperature, and max tokens.
     Yields dictionaries with response tokens and usage metadata.
     """
     # Prepend current date to ensure agent has up-to-date context
@@ -256,7 +257,7 @@ async def run_agent(prompt: str, model_name: str = "gemini-2.5-flash", history: 
     # Combine initial context, history, and current prompt
     full_messages = initial_messages + history + [HumanMessage(content=prompt)]
 
-    app = create_agent_graph(model_name)
+    app = create_agent_graph(model_name, temperature, max_tokens)
     inputs = {"messages": full_messages}
     
     # Track usage across the stream

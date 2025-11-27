@@ -9,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Grid
 from textual.message import Message
-from textual.widgets import Header, Footer, TextArea, Label, OptionList
+from textual.widgets import Header, Footer, TextArea, Label, OptionList, Button, Input
 from textual.widgets.option_list import Option
 from textual.screen import ModalScreen
 
@@ -96,6 +96,53 @@ class ModelSelectionScreen(ModalScreen[str]):
         # OptionList returns the string label of the selected option
         selected_model = str(event.option.prompt)
         self.dismiss(selected_model)
+    
+    def key_escape(self) -> None:
+        """Handle Escape key to cancel."""
+        self.dismiss(None)
+
+class SettingsScreen(ModalScreen[dict]):
+    """A modal screen to configure settings."""
+
+    def __init__(self, current_temp: float, current_max_tokens: int | None):
+        super().__init__()
+        self.current_temp = current_temp
+        self.current_max_tokens = current_max_tokens
+
+    def compose(self) -> ComposeResult:
+        max_tokens_val = str(self.current_max_tokens) if self.current_max_tokens is not None else "" 
+        
+        yield Grid(
+            Label("LLM Settings", id="settings-title"),
+            
+            Label("Temperature (0.0 - 1.0):"),
+            Input(str(self.current_temp), id="temp-input", type="number", placeholder="0.7"),
+            
+            Label("Max Output Tokens (Optional):"),
+            Input(max_tokens_val, id="tokens-input", type="number", placeholder="e.g., 2048"),
+            
+            Button("Save", variant="primary", id="save-btn"),
+            id="settings-dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save-btn":
+            try:
+                temp_val = float(self.query_one("#temp-input", Input).value)
+                if not (0.0 <= temp_val <= 1.0):
+                    self.app.notify("Temperature must be between 0.0 and 1.0", severity="error")
+                    return
+
+                tokens_val_str = self.query_one("#tokens-input", Input).value
+                tokens_val = int(tokens_val_str) if tokens_val_str else None
+                
+                self.dismiss({"temperature": temp_val, "max_tokens": tokens_val})
+            except ValueError:
+                self.app.notify("Invalid input values", severity="error")
+    
+    def key_escape(self) -> None:
+        """Handle Escape key to cancel."""
+        self.dismiss(None)
 
 class TuiApp(App):
     """A Textual app to chat with a LangGraph agent."""
@@ -136,6 +183,9 @@ class TuiApp(App):
         logging.info("TuiApp mounted.")
         self.dark = False
         self.current_model = "gemini-2.5-flash"
+        self.llm_temperature = 0.7 # Default temperature
+        self.llm_max_tokens = None # Default max tokens (None means unlimited/model default) 
+        
         self.session_total_cost = 0.0
         self.session_total_tokens = 0
         self.monthly_cost = storage.calculate_monthly_cost()
@@ -161,48 +211,19 @@ class TuiApp(App):
         self.update_status_bar(0.0) # Initialize with 0 for last cost
         self.query_one(ChatInput).focus()
         
-        # Refresh sidebar every 10 seconds
+        # Sidebar auto-refresh
         self.set_interval(10, self.load_conversations_into_sidebar)
 
-    def on_chat_input_history_prev(self) -> None:
-        """Handle Ctrl+Up."""
-        if not self.command_history:
-            return
-        
-        # If we are currently at "new line" (index -1), start from the end
-        if self.history_index == -1:
-            self.history_index = len(self.command_history) - 1
-        elif self.history_index > 0:
-            self.history_index -= 1
-        
-        self._load_history_item()
-
-    def on_chat_input_history_next(self) -> None:
-        """Handle Ctrl+Down."""
-        if self.history_index == -1:
-            return
-
-        if self.history_index < len(self.command_history) - 1:
-            self.history_index += 1
-            self._load_history_item()
-        else:
-            # We are at the end, pushing down goes back to empty line
-            self.history_index = -1
-            self.query_one(ChatInput).clear()
-
-    def _load_history_item(self):
-        """Helper to load the command at current history_index into input."""
-        if 0 <= self.history_index < len(self.command_history):
-            text = self.command_history[self.history_index]
-            input_widget = self.query_one(ChatInput)
-            input_widget.clear()
-            input_widget.insert(text)
+    # --- Helper Methods ---
 
     def update_status_bar(self, last_cost: float):
         """Updates the status bar with current metrics."""
         model_display = f"[bold]{self.current_model}[/bold]"
+        
+        tokens_display = f"MaxTok={self.llm_max_tokens}" if self.llm_max_tokens else "MaxTok=Auto"
+        
         status_text = (
-            f"Model: {model_display} | "
+            f"Model: {model_display} (T={self.llm_temperature}, {tokens_display}) | "
             f"Last: [green]${last_cost:.6f}[/] | "
             f"Conv: [blue]${self.conversation_cost:.6f}[/] ({self.conversation_tokens} tok) | "
             f"Month: [red]${self.monthly_cost:.6f}[/]"
@@ -225,7 +246,6 @@ class TuiApp(App):
         sidebar = self.query_one("#sidebar", OptionList)
         
         # Store current selection index to restore if possible?
-        # OptionList doesn't easily support "restore by ID". Simpler to just reload.
         
         sidebar.clear_options()
         
@@ -279,7 +299,6 @@ class TuiApp(App):
             
             for conv in convs:
                 title = conv.get("title", "Untitled")
-                # Clean title
                 title = title.split("\n")[0][:30] 
                 
                 sidebar.add_option(Option(title, id=conv["id"]))
@@ -288,13 +307,12 @@ class TuiApp(App):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Handle sidebar selection (Main conversation list)."""
-        # Only handle sidebar selections here (check ID)
         if event.option_list.id == "sidebar":
             if event.option_index is None:
                 return
             
             selected_item = self.conversations_map.get(event.option_index)
-            if selected_item: # It's a conversation, not a header
+            if selected_item: 
                 self.load_chat(selected_item["id"])
 
     def load_chat(self, conversation_id: str):
@@ -306,20 +324,18 @@ class TuiApp(App):
 
         self.current_conversation_id = data["id"]
         self.conversation_history = []
-        self.conversation_cost = 0.0 # Reset for this specific load
-        self.conversation_tokens = 0 # Reset for this specific load
+        self.conversation_cost = 0.0 
+        self.conversation_tokens = 0 
         self.query_one("#log", TextArea).clear()
         
-        # Replay messages
         for msg in data.get("messages", []):
             if msg["type"] == "human":
                 self.conversation_history.append(HumanMessage(content=msg["content"]))
                 self.write_to_log(f"[bold blue]You:[/ ] {msg['content']}")
             elif msg["type"] == "ai":
-                # Restore metadata
                 additional_kwargs = {}
-                cost_per_msg = msg.get("cost", 0.0) # Extract cost from loaded msg
-                usage_per_msg = msg.get("usage", {}) # Extract usage from loaded msg
+                cost_per_msg = msg.get("cost", 0.0)
+                usage_per_msg = msg.get("usage", {})
                 
                 additional_kwargs["cost"] = cost_per_msg
                 additional_kwargs["usage"] = usage_per_msg
@@ -327,23 +343,20 @@ class TuiApp(App):
                 self.conversation_history.append(AIMessage(content=msg["content"], additional_kwargs=additional_kwargs))
                 self.write_to_log(f"[bold green]Agent:[/ ] {msg['content']}")
                 
-                # Accumulate for conversation totals
                 self.conversation_cost += cost_per_msg
                 self.conversation_tokens += usage_per_msg.get("total_tokens", 0)
         
-        self.update_status_bar(0.0) # No "last" cost on load, but update conv totals
+        self.update_status_bar(0.0)
         self.write_to_log(f"[bold yellow]INFO:[/ ] Loaded conversation: {data.get('title')}")
 
     def save_current_chat(self):
         """Saves the current conversation to storage."""
-        # Convert BaseMessage objects to dicts
         messages_data = []
         for msg in self.conversation_history:
             if isinstance(msg, HumanMessage):
                 messages_data.append({"type": "human", "content": msg.content})
             elif isinstance(msg, AIMessage):
                 msg_data = {"type": "ai", "content": msg.content}
-                # Save metadata if present
                 if "cost" in msg.additional_kwargs:
                     msg_data["cost"] = msg.additional_kwargs["cost"]
                 if "usage" in msg.additional_kwargs:
@@ -368,7 +381,6 @@ class TuiApp(App):
 
     def stream_text_to_log(self, text: str) -> None:
         """Appends text to the log without a newline (for streaming)."""
-        # Strip markup since we are in TextArea mode
         plain_text = Text.from_markup(text).plain
         log = self.query_one("#log", TextArea)
         log.insert(plain_text)
@@ -376,7 +388,6 @@ class TuiApp(App):
 
     def write_to_log(self, text: str) -> None:
         """Helper method to write text to the log and scroll to the end."""
-        # Strip markup tags so they don't appear as raw text in the TextArea
         plain_text = Text.from_markup(text).plain
         log = self.query_one("#log", TextArea)
         log.insert(plain_text + "\n")
@@ -384,76 +395,34 @@ class TuiApp(App):
 
     # --- Worker Methods ---
 
-    async def run_agent_worker(self) -> None:
-        """Runs the agent in a background worker with streaming."""
-        prompt = self.prompt_to_run
-        model = self.current_model
-        history = self.conversation_history.copy() # Pass copy of history
-
-        logging.info(f"Running agent with model: {model}")
+    def select_model_worker(self) -> None:
+        """Fetches models and opens the selection modal."""
+        logging.info("Fetching models for selection.")
         
-        # Start the log entry for the agent
-        self.call_from_thread(self.write_to_log, "[bold green]Agent:[/ ]") 
+        gemini_models = [
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3-pro-preview",
+        ]
         
-        full_response = ""
-        usage = {}
-        interaction_cost = 0.0
-
+        ollama_models = []
         try:
-            # run_agent is now an async generator
-            async for chunk in run_agent(prompt, model_name=model, history=history):
-                if chunk["type"] == "token":
-                    text = chunk["content"]
-                    full_response += text
-                    self.call_from_thread(self.stream_text_to_log, text)
-                
-                elif chunk["type"] == "usage":
-                    usage = chunk["usage"]
-            
-            # Add a newline after streaming finishes
-            self.call_from_thread(self.stream_text_to_log, "\n")
-
-            # Calculate costs (post-stream)
-            input_tokens = usage.get("input_tokens", 0)
-            output_tokens = usage.get("output_tokens", 0)
-            total_tokens = usage.get("total_tokens", 0)
-            
-            pricing = PRICING.get(model, {"input": 0, "output": 0})
-            input_cost = (input_tokens / 1_000_000) * pricing["input"]
-            output_cost = (output_tokens / 1_000_000) * pricing["output"]
-            interaction_cost = input_cost + output_cost
-            
-            # Update totals
-            self.session_total_cost += interaction_cost
-            self.session_total_tokens += total_tokens
-            self.monthly_cost += interaction_cost
-            self.conversation_cost += interaction_cost
-            self.conversation_tokens += total_tokens
-            
-            # Update history with metadata
-            self.conversation_history.append(HumanMessage(content=prompt))
-            self.conversation_history.append(
-                AIMessage(
-                    content=full_response, 
-                    additional_kwargs={"cost": interaction_cost, "usage": usage}
-                )
-            )
-            
-            # Save persistence
-            self.call_from_thread(self.save_current_chat)
-            
-            # Update status bar
-            self.call_from_thread(self.update_status_bar, interaction_cost)
-            
-            logging.info(f"Agent response (streamed): {full_response}")
-            logging.info(f"Usage: {usage}, Cost: {interaction_cost}")
-            
+            ollama_response = ollama.list()
+            if 'models' in ollama_response:
+                for m in ollama_response['models']:
+                    name = m['model']
+                    ollama_models.append(f"ollama:{name}")
         except Exception as e:
-            error_msg = f"\n[bold red]Error:[/ ] {e}"
-            self.call_from_thread(self.write_to_log, error_msg)
-            logging.error(f"Error running agent: {e}", exc_info=True)
-        finally:
-            self.call_from_thread(self.reset_input)
+            logging.warning(f"Failed to list Ollama models: {e}")
+        
+        all_models = gemini_models + ollama_models
+        
+        self.call_from_thread(self.app.push_screen, ModelSelectionScreen(all_models), self.on_model_selected)
+
+    def select_settings_worker(self) -> None:
+        """Opens the settings modal."""
+        self.call_from_thread(self.app.push_screen, SettingsScreen(self.llm_temperature, self.llm_max_tokens), self.on_settings_changed)
 
     def list_models_worker(self) -> None:
         """Provides a list of available models (Gemini + Ollama)."""
@@ -489,13 +458,75 @@ class TuiApp(App):
 
         models_info += "\n[bold yellow]Note:[/ ] Use `/set_model <name>` to switch."
         
-        # Directly update UI from worker using call_from_thread
         self.call_from_thread(self.write_to_log, models_info)
         self.call_from_thread(self.set_available_models, all_models)
         self.call_from_thread(self.reset_input)
 
+    async def run_agent_worker(self) -> None:
+        """Runs the agent in a background worker with streaming."""
+        prompt = self.prompt_to_run
+        model = self.current_model
+        temperature = self.llm_temperature
+        max_tokens = self.llm_max_tokens
+        history = self.conversation_history.copy() # Pass copy of history
 
-    # --- Event Handlers & UI Logic ---
+        logging.info(f"Running agent with model: {model}, temp: {temperature}, max_tok: {max_tokens}")
+        
+        self.call_from_thread(self.write_to_log, "[bold green]Agent:[/ ]") 
+        
+        full_response = ""
+        usage = {}
+        interaction_cost = 0.0
+
+        try:
+            async for chunk in run_agent(prompt, model_name=model, temperature=temperature, max_tokens=max_tokens, history=history):
+                if chunk["type"] == "token":
+                    text = chunk["content"]
+                    full_response += text
+                    self.call_from_thread(self.stream_text_to_log, text)
+                
+                elif chunk["type"] == "usage":
+                    usage = chunk["usage"]
+            
+            self.call_from_thread(self.stream_text_to_log, "\n")
+
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+            
+            pricing = PRICING.get(model, {"input": 0, "output": 0})
+            input_cost = (input_tokens / 1_000_000) * pricing["input"]
+            output_cost = (output_tokens / 1_000_000) * pricing["output"]
+            interaction_cost = input_cost + output_cost
+            
+            self.session_total_cost += interaction_cost
+            self.session_total_tokens += total_tokens
+            self.monthly_cost += interaction_cost
+            self.conversation_cost += interaction_cost
+            self.conversation_tokens += total_tokens
+            
+            self.conversation_history.append(HumanMessage(content=prompt))
+            self.conversation_history.append(
+                AIMessage(
+                    content=full_response, 
+                    additional_kwargs={"cost": interaction_cost, "usage": usage}
+                )
+            )
+            
+            self.call_from_thread(self.save_current_chat)
+            self.call_from_thread(self.update_status_bar, interaction_cost)
+            
+            logging.info(f"Agent response (streamed): {full_response}")
+            logging.info(f"Usage: {usage}, Cost: {interaction_cost}")
+            
+        except Exception as e:
+            error_msg = f"\n[bold red]Error:[/ ] {e}"
+            self.call_from_thread(self.write_to_log, error_msg)
+            logging.error(f"Error running agent: {e}", exc_info=True)
+        finally:
+            self.call_from_thread(self.reset_input)
+
+    # --- Event Handlers (Callbacks) ---
 
     def on_models_listed(self, message: ModelsListed) -> None:
         """Handles the ModelsListed message to store and display available models."""
@@ -510,6 +541,21 @@ class TuiApp(App):
             self.write_to_log(f"[bold yellow]INFO:[/ ] Model set to: {self.current_model}")
             logging.info(f"Model switched to: {self.current_model}")
             self.update_status_bar(0.0) # Refresh status bar to show new model
+        
+        self.reset_input()
+
+    def on_settings_changed(self, settings: dict) -> None:
+        """Callback for settings change."""
+        if settings:
+            self.llm_temperature = settings.get("temperature", 0.0)
+            self.llm_max_tokens = settings.get("max_tokens")
+            
+            log_msg = f"[bold yellow]INFO:[/ ] Settings updated: T={self.llm_temperature}"
+            if self.llm_max_tokens:
+                log_msg += f", MaxTokens={self.llm_max_tokens}"
+            self.write_to_log(log_msg)
+            
+            self.update_status_bar(0.0)
         
         self.reset_input()
 
@@ -538,11 +584,16 @@ class TuiApp(App):
             
             if command == "/model":
                 self.run_worker(self.select_model_worker, exclusive=True, thread=True)
+            elif command == "/settings":
+                self.run_worker(self.select_settings_worker, exclusive=True, thread=True)
+            elif command == "/list_models": # Kept for backward compatibility
+                self.run_worker(self.list_models_worker, exclusive=True, thread=True)
             elif command == "/help":
                 help_text = """[bold cyan]Available Commands:[/ ]
 - [bold]/help[/ ]: Show this help message.
 - [bold]/new[/ ]: Start a new conversation.
 - [bold]/model[/ ]: Open the model selector to switch AI models.
+- [bold]/settings[/ ]: Configure LLM settings (e.g., temperature).
 """
                 self.write_to_log(help_text)
                 self.reset_input()

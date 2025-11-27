@@ -47,26 +47,36 @@ Screen {
     padding: 0 1; /* Internal padding for content */
 }
 
-/* --- Model Selection Modal --- */
+/* --- Settings Modal --- */
 
-ModelSelectionScreen {
+SettingsScreen {
     align: center middle;
     background: $background 50%;
 }
 
-#model-dialog {
+#settings-dialog {
     grid-size: 1;
-    grid-rows: auto 1fr;
+    grid-rows: auto auto auto 1fr;
     width: 60;
     height: 20;
     border: thick $primary;
     background: $surface;
+    padding: 1 2;
 }
 
-#model-title {
+#settings-title {
     content-align: center middle;
     padding: 1;
     background: $primary-darken-2;
     color: $text;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#settings-dialog Input {
+    margin-bottom: 1;
+}
+
+#settings-dialog Button {
     width: 100%;
 }
