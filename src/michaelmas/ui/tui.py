@@ -150,6 +150,9 @@ class TuiApp(App):
 
         self.load_conversations_into_sidebar()
         
+        # Refresh sidebar every 10 seconds
+        self.set_interval(10, self.load_conversations_into_sidebar)
+        
         self.write_to_log("[bold green]Agent:[/ ] Hello! How can I assist you today?")
         self.write_to_log(f"[bold yellow]INFO:[/ ] Using model: {self.current_model}")
         
