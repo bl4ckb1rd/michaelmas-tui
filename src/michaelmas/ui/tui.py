@@ -664,6 +664,9 @@ class TuiApp(App):
                 self.run_worker(self.select_model_worker, exclusive=True, thread=True)
             elif command == "/settings":
                 self.run_worker(self.select_settings_worker, exclusive=True, thread=True)
+            elif command == "/new":
+                self.action_new_chat()
+                self.reset_input()
             elif command == "/list_models": # Kept for backward compatibility
                 self.run_worker(self.list_models_worker, exclusive=True, thread=True)
             elif command == "/help":

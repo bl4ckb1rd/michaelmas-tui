@@ -66,3 +66,42 @@ def test_create_agent_graph_ollama(mocker):
     agent.create_agent_graph("ollama:llama3")
     
     mock_ollama.assert_called_with(model="llama3", temperature=0.7, num_predict=None)
+
+def test_check_ollama_tool_support(mocker):
+    mock_ollama_show = mocker.patch("michaelmas.core.agent.ollama.show")
+    
+    # Case 1: Template has {{ .Tools }}
+    mock_ollama_show.return_value = {"template": "Some template {{ .Tools }}"}
+    assert agent.check_ollama_tool_support("model1") is True
+    
+    # Case 2: Known capable model name
+    mock_ollama_show.side_effect = Exception("Error")
+    assert agent.check_ollama_tool_support("llama3.1") is True
+    
+    # Case 3: Not capable
+    assert agent.check_ollama_tool_support("dumb-model") is False
+
+def test_create_agent_graph_with_enabled_tools(mocker):
+    mocker.patch.dict("os.environ", {"GOOGLE_API_KEY": "test"})
+    mock_gemini = mocker.patch("michaelmas.core.agent.ChatGoogleGenerativeAI")
+    mock_compile = mocker.patch("langgraph.graph.StateGraph.compile")
+    
+    agent._agent_graph_cache.clear()
+    
+    # Only enable web_search
+    agent.create_agent_graph("gemini-test", enabled_tools=["web_search"])
+    
+    # Verify filtering logic (indirectly via coverage, hard to inspect graph nodes deeply without running it)
+    # But we can check if graph construction didn't crash
+    mock_compile.assert_called()
+
+def test_create_agent_graph_openai(mocker):
+    mocker.patch.dict("os.environ", {"OPENAI_API_KEY": "test"})
+    mock_openai = mocker.patch("michaelmas.core.agent.ChatOpenAI")
+    mock_compile = mocker.patch("langgraph.graph.StateGraph.compile")
+    
+    agent._agent_graph_cache.clear()
+    
+    agent.create_agent_graph("openai:gpt-4")
+    
+    mock_openai.assert_called_with(model="gpt-4", temperature=0.7, max_tokens=None)
