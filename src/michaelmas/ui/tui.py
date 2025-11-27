@@ -93,12 +93,10 @@ class ModelSelectionScreen(ModalScreen[str]):
         self.query_one(OptionList).focus()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        # OptionList returns the string label of the selected option
         selected_model = str(event.option.prompt)
         self.dismiss(selected_model)
-    
+
     def key_escape(self) -> None:
-        """Handle Escape key to cancel."""
         self.dismiss(None)
 
 class SettingsScreen(ModalScreen[dict]):
@@ -395,73 +393,6 @@ class TuiApp(App):
 
     # --- Worker Methods ---
 
-    def select_model_worker(self) -> None:
-        """Fetches models and opens the selection modal."""
-        logging.info("Fetching models for selection.")
-        
-        gemini_models = [
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-3-pro-preview",
-        ]
-        
-        ollama_models = []
-        try:
-            ollama_response = ollama.list()
-            if 'models' in ollama_response:
-                for m in ollama_response['models']:
-                    name = m['model']
-                    ollama_models.append(f"ollama:{name}")
-        except Exception as e:
-            logging.warning(f"Failed to list Ollama models: {e}")
-        
-        all_models = gemini_models + ollama_models
-        
-        self.call_from_thread(self.app.push_screen, ModelSelectionScreen(all_models), self.on_model_selected)
-
-    def select_settings_worker(self) -> None:
-        """Opens the settings modal."""
-        self.call_from_thread(self.app.push_screen, SettingsScreen(self.llm_temperature, self.llm_max_tokens), self.on_settings_changed)
-
-    def list_models_worker(self) -> None:
-        """Provides a list of available models (Gemini + Ollama)."""
-        logging.info("Listing available models.")
-        models_info = "[bold cyan]Available Gemini Models (for your API key):[/]\n"
-        gemini_models = [
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-3-pro-preview",
-        ]
-        
-        # Add local Ollama models
-        ollama_models = []
-        try:
-            ollama_response = ollama.list()
-            if 'models' in ollama_response:
-                for m in ollama_response['models']:
-                    name = m['model']
-                    ollama_models.append(f"ollama:{name}")
-            else:
-                 models_info += "[dim]No models found in Ollama response.[/]\n"
-        except Exception as e:
-            logging.warning(f"Failed to list Ollama models: {e}")
-            models_info += f"[dim]Could not connect to Ollama ({e}). Make sure it is running.[/]\n"
-        
-        # Combine all models
-        all_models = gemini_models + ollama_models
-        
-        # Format for display
-        for model_name in all_models:
-            models_info += f"- `{model_name}`\n"
-
-        models_info += "\n[bold yellow]Note:[/ ] Use `/set_model <name>` to switch."
-        
-        self.call_from_thread(self.write_to_log, models_info)
-        self.call_from_thread(self.set_available_models, all_models)
-        self.call_from_thread(self.reset_input)
-
     async def run_agent_worker(self) -> None:
         """Runs the agent in a background worker with streaming."""
         prompt = self.prompt_to_run
@@ -526,13 +457,75 @@ class TuiApp(App):
         finally:
             self.call_from_thread(self.reset_input)
 
+    def select_model_worker(self) -> None:
+        """Fetches models and opens the selection modal."""
+        logging.info("Fetching models for selection.")
+        
+        gemini_models = [
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3-pro-preview",
+        ]
+        
+        ollama_models = []
+        try:
+            ollama_response = ollama.list()
+            if 'models' in ollama_response:
+                for m in ollama_response['models']:
+                    name = m['model']
+                    ollama_models.append(f"ollama:{name}")
+        except Exception as e:
+            logging.warning(f"Failed to list Ollama models: {e}")
+        
+        all_models = gemini_models + ollama_models
+        
+        self.call_from_thread(self.app.push_screen, ModelSelectionScreen(all_models), self.on_model_selected)
+
+    def select_settings_worker(self) -> None:
+        """Opens the settings modal."""
+        self.call_from_thread(self.app.push_screen, SettingsScreen(self.llm_temperature, self.llm_max_tokens), self.on_settings_changed)
+
+    def list_models_worker(self) -> None:
+        """Provides a list of available models (Gemini + Ollama)."""
+        logging.info("Listing available models.")
+        models_info = "[bold cyan]Available Gemini Models (for your API key):[/]\n"
+        gemini_models = [
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3-pro-preview",
+        ]
+        
+        ollama_models = []
+        try:
+            ollama_response = ollama.list()
+            if 'models' in ollama_response:
+                for m in ollama_response['models']:
+                    name = m['model']
+                    ollama_models.append(f"ollama:{name}")
+            else:
+                 models_info += "[dim]No models found in Ollama response.[/]\n"
+        except Exception as e:
+            logging.warning(f"Failed to list Ollama models: {e}")
+            models_info += f"[dim]Could not connect to Ollama ({e}). Make sure it is running.[/]\n"
+        
+        all_models = gemini_models + ollama_models
+        
+        models_info += "\n[bold yellow]Note:[/ ] Use `/set_model <name>` to switch."
+        
+        self.call_from_thread(self.write_to_log, models_info)
+        self.call_from_thread(self.set_available_models, all_models)
+        self.call_from_thread(self.reset_input)
+
+
     # --- Event Handlers (Callbacks) ---
 
     def on_models_listed(self, message: ModelsListed) -> None:
         """Handles the ModelsListed message to store and display available models."""
         self.available_models = message.models
-        self.write_to_log(message.info_text) # Display the info text
-        self.reset_input() # Reset input focus after listing
+        self.write_to_log(message.info_text) 
+        self.reset_input()
 
     def on_model_selected(self, model_name: str) -> None:
         """Callback for when a model is selected from the modal."""
@@ -540,7 +533,7 @@ class TuiApp(App):
             self.current_model = model_name
             self.write_to_log(f"[bold yellow]INFO:[/ ] Model set to: {self.current_model}")
             logging.info(f"Model switched to: {self.current_model}")
-            self.update_status_bar(0.0) # Refresh status bar to show new model
+            self.update_status_bar(0.0) 
         
         self.reset_input()
 
