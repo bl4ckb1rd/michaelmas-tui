@@ -86,16 +86,26 @@ def create_supervisor(llm):
 # Helper to check Ollama tool support dynamically
 def check_ollama_tool_support(model_name: str) -> bool:
     """
-    Checks if an Ollama model supports tools by inspecting its template.
+    Checks if an Ollama model supports tools by inspecting its template
+    OR by checking against a known list of capable models.
     """
+    # 1. Check template for {{ .Tools }}
     try:
         model_info = ollama.show(model_name)
         template = model_info.get('template', '')
-        # Ollama standard for tools is the presence of {{ .Tools }} in the template
-        return "{{ .Tools }}" in template
+        if "{{ .Tools }}" in template:
+            return True
     except Exception as e:
-        logging.warning(f"Failed to check tool support for {model_name}: {e}")
-        return False
+        logging.warning(f"Failed to check template for {model_name}: {e}")
+
+    # 2. Fallback: Check known capable models list
+    # Some versions of models/ollama might not expose .Tools in template but still support it
+    known_capable = ["llama3.1", "mistral", "mixtral", "qwen2.5", "command-r", "hermes"]
+    model_name_lower = model_name.lower()
+    if any(k in model_name_lower for k in known_capable):
+        return True
+        
+    return False
 
 def create_agent_node(llm, tools):
     def agent_node(state: SupervisorState):
