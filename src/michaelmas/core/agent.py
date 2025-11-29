@@ -28,6 +28,7 @@ from michaelmas.tools.sheets import (
 )
 from michaelmas.tools.search import web_search
 from michaelmas.tools.shell import run_shell_command
+from michaelmas.core.mcp import mcp_manager
 
 # Load environment variables from .env file
 load_dotenv()
@@ -204,8 +205,10 @@ def create_agent_graph(
     Caches the compiled graph to avoid redundant work.
     """
     # Include enabled_tools in cache key (convert list to tuple for hashability)
+    # Also include count of MCP tools to invalidate cache if new tools appear
+    mcp_tool_count = len(mcp_manager.tools)
     tools_key = tuple(sorted(enabled_tools)) if enabled_tools is not None else "ALL"
-    cache_key = (model_name, temperature, max_tokens, tools_key)
+    cache_key = (model_name, temperature, max_tokens, tools_key, mcp_tool_count)
     if cache_key in _agent_graph_cache:
         return _agent_graph_cache[cache_key]
 
@@ -236,13 +239,16 @@ def create_agent_graph(
 
     supervisor_node = create_supervisor(llm)
 
+    # Combine tools
+    current_general_tools = general_tools + mcp_manager.tools
+
     # Filter tools based on enabled_tools
     if enabled_tools is None:
         filtered_sheets = sheets_tools
-        filtered_general = general_tools
+        filtered_general = current_general_tools
     else:
         filtered_sheets = [t for t in sheets_tools if t.name in enabled_tools]
-        filtered_general = [t for t in general_tools if t.name in enabled_tools]
+        filtered_general = [t for t in current_general_tools if t.name in enabled_tools]
 
     # Sheets Sub-graph elements
     sheets_agent_node = create_agent_node(llm, filtered_sheets)

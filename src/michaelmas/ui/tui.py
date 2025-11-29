@@ -30,6 +30,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from michaelmas.core.agent import run_agent, ALL_TOOLS_MAP
 from michaelmas.core import storage
+from michaelmas.core.mcp import mcp_manager
 
 # Load environment variables from .env file
 load_dotenv()
@@ -249,9 +250,16 @@ class TuiApp(App):
 
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Called when the app is mounted."""
         logging.info("TuiApp mounted.")
+
+        # Initialize MCP
+        try:
+            await mcp_manager.initialize()
+        except Exception as e:
+            logging.error(f"Failed to initialize MCP: {e}")
+
         self.dark = False
         self.current_model = "gemini-2.5-flash"
         self.llm_temperature = 0.7  # Default temperature
@@ -292,6 +300,9 @@ class TuiApp(App):
 
         # Sidebar auto-refresh
         self.set_interval(10, self.load_conversations_into_sidebar)
+
+    async def on_unmount(self) -> None:
+        await mcp_manager.cleanup()
 
     # --- Helper Methods ---
 
@@ -628,7 +639,10 @@ class TuiApp(App):
 
     def select_settings_worker(self) -> None:
         """Opens the settings modal."""
-        all_tools = list(ALL_TOOLS_MAP.keys())
+        # Merge standard tools with discovered MCP tools for the settings UI
+        mcp_tool_names = [t.name for t in mcp_manager.tools]
+        all_tools = list(ALL_TOOLS_MAP.keys()) + mcp_tool_names
+
         self.call_from_thread(
             self.app.push_screen,
             SettingsScreen(

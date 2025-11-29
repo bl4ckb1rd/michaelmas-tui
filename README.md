@@ -99,6 +99,24 @@ To use local models:
 2.  Pull a model: `ollama pull llama3`.
 3.  In Michaelmas: Use `/model` command and select your Ollama model.
 
+## MCP Support
+
+Michaelmas supports the **Model Context Protocol (MCP)** to connect to external tools and resources.
+
+1.  **Configure Servers:** Edit the `mcp_config.json` file in the project root.
+    ```json
+    {
+      "mcpServers": {
+        "filesystem": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+        }
+      }
+    }
+    ```
+2.  **Restart Application:** Restart the TUI to load the new configuration.
+3.  **Enable Tools:** Go to `/settings` to enable the discovered MCP tools.
+
 ## Maintenance
 
 *   `make clean`: Removes the virtual environment, logs, and temporary files.
@@ -110,5 +128,5 @@ MIT License. Copyright (c) 2025 Diego Amor (bl4ckb1rd).
 ## Roadmap
 
 - [ ] **Database Integration**: Implement a persistent database (e.g., SQLite/PostgreSQL) for robust conversation storage and retrieval.
-- [ ] **MCP Support**: Add support for the Model Context Protocol (MCP) to standardize context management.
+- [x] **MCP Support**: Add support for the Model Context Protocol (MCP) to standardize context management.
 - [ ] **Expanded Toolset**: Integrate additional tools to enhance agent capabilities (e.g., calendar, email, file system).
